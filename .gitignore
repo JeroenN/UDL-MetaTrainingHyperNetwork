@@ -219,3 +219,5 @@ __marimo__/
 
 ## EXTRA ADDED - PROJECT SPECIFIC
 .DS_Store
+data/
+vae/checkpoints/
