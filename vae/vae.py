@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-IN_CHANNELS = 3
+IN_CHANNELS = 1
 KERNEL_SIZE = 4
 DECODER_STRIDE = 2
 
@@ -83,59 +83,29 @@ class VAE(nn.Module):
         self.h = h
         self.in_channels = in_channels
 
-        # Encoder: Convolutional layers
-        # For MNIST (28x28): 28 -> 14 -> 7 -> 7 (with appropriate architecture)
-        # For RGB (128x128): 128 -> 64 -> 32 -> 16 -> 8
+       
+        self.encoder = nn.Sequential(
+            ResidualBlock(in_channels=1, out_channels=32, kernel_size=3, padding=1, strides=(1, 2)),  # 28 -> 14
+            ResidualBlock(in_channels=32, out_channels=64, kernel_size=3, padding=1, strides=(1, 2)),  # 14 -> 7
+            ResidualBlock(in_channels=64, out_channels=128, kernel_size=3, padding=1, strides=(1, 1)),  # 7 -> 7
+        )
         
-        if w == 28 and h == 28 and in_channels == 1:
-            # MNIST-specific architecture
-            self.encoder = nn.Sequential(
-                ResidualBlock(in_channels=1, out_channels=32, kernel_size=3, padding=1, strides=(1, 2)),  # 28 -> 14
-                ResidualBlock(in_channels=32, out_channels=64, kernel_size=3, padding=1, strides=(1, 2)),  # 14 -> 7
-                ResidualBlock(in_channels=64, out_channels=128, kernel_size=3, padding=1, strides=(1, 1)),  # 7 -> 7
-            )
+        self.latent_space_img_dims: CDim = [128, 7, 7]
+        last_ch, last_w, last_h = self.latent_space_img_dims
+        
+        self.decoder = nn.Sequential(
+            ResidualBlock(in_channels=128, out_channels=64, kernel_size=3, padding=1, strides=(1, 1)),
+            nn.PixelShuffle(2),  # 7 -> 14, channels: 64 -> 16
             
-            self.latent_space_img_dims: CDim = [128, 7, 7]
-            last_ch, last_w, last_h = self.latent_space_img_dims
+            ResidualBlock(in_channels=16, out_channels=64, kernel_size=3, padding=1, strides=(1, 1)),
+            nn.PixelShuffle(2),  # 14 -> 28, channels: 64 -> 16
             
-            self.decoder = nn.Sequential(
-                ResidualBlock(in_channels=128, out_channels=64, kernel_size=3, padding=1, strides=(1, 1)),
-                nn.PixelShuffle(2),  # 7 -> 14, channels: 64 -> 16
-                
-                ResidualBlock(in_channels=16, out_channels=64, kernel_size=3, padding=1, strides=(1, 1)),
-                nn.PixelShuffle(2),  # 14 -> 28, channels: 64 -> 16
-                
-                ResidualBlock(in_channels=16, out_channels=8, last_channels=4, kernel_size=3, padding=1, strides=(1, 1), non_residual=True),
-                nn.PixelShuffle(2),  # 28 -> 56, channels: 4 -> 1
-                
-                # Need to downsample back to 28x28
-                nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=1),  # 56 -> 28
-            )
-        else:
-            # Original RGB architecture
-            self.encoder = nn.Sequential(
-                ResidualBlock(in_channels=in_channels, out_channels=30, kernel_size=3, padding=1, strides=(1, 2)),
-                ResidualBlock(in_channels=30, out_channels=90, kernel_size=3, padding=1, strides=(1, 2)),
-                ResidualBlock(in_channels=90, out_channels=150, kernel_size=3, padding=1, strides=(1, 2)),
-                ResidualBlock(in_channels=150, out_channels=200, last_channels=250, kernel_size=3, padding=1, strides=(1, 2)),
-            )
-
-            self.latent_space_img_dims: CDim = [250, 8, 8]
-            last_ch, last_w, last_h  = self.latent_space_img_dims
-
-            self.decoder = nn.Sequential(
-                ResidualBlock(in_channels=250, out_channels=200, kernel_size=3, padding=1, strides=(1, 1)),
-                nn.PixelShuffle(2),
-
-                ResidualBlock(in_channels=50, out_channels=160, kernel_size=3, padding=1, strides=(1, 1)),
-                nn.PixelShuffle(2),
-
-                ResidualBlock(in_channels=40, out_channels=160, kernel_size=3, padding=1, strides=(1, 1)),
-                nn.PixelShuffle(2),
-
-                ResidualBlock(in_channels=40, out_channels=20, last_channels=12, kernel_size=1, padding=0, strides=(1, 1), non_residual=True),
-                nn.PixelShuffle(2),
-            )
+            ResidualBlock(in_channels=16, out_channels=8, last_channels=4, kernel_size=3, padding=1, strides=(1, 1), non_residual=True),
+            nn.PixelShuffle(2),  # 28 -> 56, channels: 4 -> 1
+            
+            # Need to downsample back to 28x28
+            nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=1),  # 56 -> 28
+        )
 
         self.fc_dim = last_ch * last_w * last_h
 
