@@ -52,7 +52,7 @@ def preprocess_image(
         x = img
         # Ensure shape is (C, H, W)
         if x.ndim == 2:
-            x = x.unsqueeze(0)   # (H, W) -> (1, H, W)
+            x = x.unsqueeze(0)  # (H, W) -> (1, H, W)
         elif x.ndim == 3:
             if x.shape[-1] in (1, 3) and x.shape[0] not in (1, 3):
                 # (H, W, C) -> (C, H, W)
@@ -76,6 +76,7 @@ def preprocess_image(
         x = x.view(-1)  # (784,)
 
     return x
+
 
 def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
     """
@@ -102,45 +103,47 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
     return transform
 
 
-def get_dataset(name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True):
+def get_dataset(
+    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True
+):
     """
     Returns a dataset function based on the dataset name.
 
     :param name: Name of the dataset ('mnist', 'cifar10', 'imagenet').
     :return: Corresponding dataset loading function.
     """
-    if name == 'mnist': # 1 channel
-        dataset = load_dataset('ylecun/mnist')
-        # The MNIST dataset consists of 70,000 28x28 black-and-white images of handwritten digits 
-        # extracted from two NIST databases. 
-        # There are 60,000 images in the training dataset and 10,000 images in the validation dataset, 
+    if name == "mnist":  # 1 channel
+        dataset = load_dataset("ylecun/mnist")
+        # The MNIST dataset consists of 70,000 28x28 black-and-white images of handwritten digits
+        # extracted from two NIST databases.
+        # There are 60,000 images in the training dataset and 10,000 images in the validation dataset,
         # one class per digit so a total of 10 classes, with 7,000 images (6,000 train and 1,000 test) per class.
-    
-    elif name == 'fashion_mnist': # 1 channel
-        dataset = load_dataset('zalando-datasets/fashion_mnist')
-        # A training set of 60,000 examples and a test set of 10,000 examples. 
-        # Each example is a 28x28 grayscale image, associated with a label from 10 classes. 
+
+    elif name == "fashion_mnist":  # 1 channel
+        dataset = load_dataset("zalando-datasets/fashion_mnist")
+        # A training set of 60,000 examples and a test set of 10,000 examples.
+        # Each example is a 28x28 grayscale image, associated with a label from 10 classes.
         # Shares the same image size and structure of training and testing splits with MNIST.
 
-    elif name == 'kmnist': # 1 channel
-        dataset = load_dataset('tanganke/kmnist')
+    elif name == "kmnist":  # 1 channel
+        dataset = load_dataset("tanganke/kmnist")
         # Classify images from the KMNIST dataset into one of the 10 classes, representing different Japanese characters.
 
-    elif name == 'hebrew_chars': # 1 channel
-        dataset = load_dataset('sivan22/hebrew-handwritten-characters')
-        # HDD_v0 consists of images of isolated Hebrew characters together with training and test sets subdivision. 
+    elif name == "hebrew_chars":  # 1 channel
+        dataset = load_dataset("sivan22/hebrew-handwritten-characters")
+        # HDD_v0 consists of images of isolated Hebrew characters together with training and test sets subdivision.
         # The images were collected from hand-filled forms.
 
-    elif name == 'math_shapes': # 3 channels
-        dataset = load_dataset('prithivMLmods/Math-Shapes')
-        # The Math-Symbols dataset is a collection of images representing various mathematical symbols. 
+    elif name == "math_shapes":  # 3 channels
+        dataset = load_dataset("prithivMLmods/Math-Shapes")
+        # The Math-Symbols dataset is a collection of images representing various mathematical symbols.
         # Size: 131MB (downloaded dataset files), 118MB (auto-connected Parquet files)
         # 20,000 Rows of 224x224 RGB images
         # Classes: 128 different mathematical symbols (e.g., circle, plus, minus, etc.)
 
     else:
         raise ValueError(f"Dataset {name} is not supported.")
-    
+
     # Apply preprocessing if arg is True
     if preprocess:
         transform_fn = _hf_batch_transform(to_tensor=to_tensor, flatten=flatten)
@@ -154,7 +157,6 @@ def get_dataset(name: str, preprocess: bool = False, to_tensor: bool = True, fla
             dataset.set_transform(transform_fn)
 
     return dataset
-
 
 
 ### DISPLAY UTILITIES FOR TESTING PURPOSES ###
