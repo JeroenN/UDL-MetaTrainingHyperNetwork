@@ -1,7 +1,6 @@
 from utils.dataset import *
 
 DATASET_NAMES = ["mnist", "fashion_mnist", "kmnist", "hebrew_chars", "math_shapes"]
-DATASET_NAMES = ["math_shapes"]
 
 def main():
     # Quick interactive check: prints + plots for each dataset
