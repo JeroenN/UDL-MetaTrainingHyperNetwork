@@ -52,7 +52,7 @@ This project uses several image classification datasets loaded with the `dataset
 - **Task**: Classification of mathematical symbols / shapes
 - **Image shape**: `3 × 224 × 224` (RGB)
 - **Flattened dim**: `150,528`
-- **#Classes**: `128`
+- **#Classes**: `8`
 - **Splits**:
   - `train`: 12,000 images
   - `validationt`: 4,000 images
