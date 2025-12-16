@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 import matplotlib.pyplot as plt
 
-from utils.dataset import get_dataset, preprocess_image
+from .dataset import get_dataset, preprocess_image
 
 OUTPUT_DIR = "figures/datasets"
 DATASET_NAMES = ["mnist", "fashion_mnist", "kmnist", "hebrew_chars", "math_shapes"]

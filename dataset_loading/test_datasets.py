@@ -1,4 +1,4 @@
-from utils.dataset import *
+from dataset import *
 
 DATASET_NAMES = ["mnist", "fashion_mnist", "kmnist", "hebrew_chars", "math_shapes"]
 

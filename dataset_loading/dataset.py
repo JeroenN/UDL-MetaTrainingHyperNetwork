@@ -1,9 +1,3 @@
-# STIL UNFINISHED
-# Will migrate everything to the utils/ and create a preprocessing function.
-# Might have to check every dataset and how each one is loaded. Also what kind of preprocessing each one needs.
-# Last: add documentation.
-
-
 from datasets import load_dataset
 from torchvision import transforms
 import numpy as np
@@ -17,6 +11,16 @@ _to_tensor = transforms.ToTensor()
 _resize_28 = transforms.Resize((28, 28))
 
 
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, dict):
+        self.dict = dict
+
+    def __len__(self):
+        return len(self.dict)
+    
+    def __getitem__(self, index):
+        return self.dict[index]['x'], self.dict[index]['y']
+    
 def preprocess_image(
     img: Union[Image.Image, np.ndarray, torch.Tensor],
     to_tensor: bool = True,

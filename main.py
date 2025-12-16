@@ -6,12 +6,19 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 import math
 import os
+from vae import VAE
+from vae import loss_mse
+import matplotlib.pyplot as plt
+from pathlib import Path
+from dataset_loading import get_dataset, Dataset
 
 device = torch.device("cuda")
 batch_size = 256
-epochs = 10
-lr = 1e-3
-log_interval = 100
+epochs_hyper = 10
+epochs_vae = 3
+lr_hyper = 1e-4
+lr_vae = 1e-4
+log_interval = 10
 save_path = "hypernet_checkpoint.pth"
 
 target_layer_sizes = [784, 400, 200, 10]
@@ -67,16 +74,15 @@ class HyperNetwork(nn.Module):
             nn.init.constant_(head[-1].bias, 0.0)
             self.heads.append(head)
 
-    def forward(self, conditioning=None):
+    def forward(self, conditioning):
         params = []
         for j in range(self.num_layers):
             z = self.layer_embeddings[j] 
-            if conditioning is not None:
-                z_cond = torch.cat([z, conditioning], dim=0)
-                head_input = z_cond.unsqueeze(0)  # (1, embed_dim + cond_dim)
-                head_input = z.unsqueeze(0)
-            else:
-                head_input = z.unsqueeze(0) 
+
+            z_cond = torch.cat([z, conditioning], dim=0)
+            head_input = z_cond.unsqueeze(0)  # (1, embed_dim + cond_dim)
+            head_input = z.unsqueeze(0)
+
             flat = self.heads[j](head_input).squeeze(0)
 
             out_dim = self.layer_sizes[j+1]
@@ -91,7 +97,74 @@ class HyperNetwork(nn.Module):
             params.append((W, b))
         return params
 
-def evaluate(model_hyper, target_net, dataloader, device):
+
+def evaluate_vae(vae, test_loader):
+    running_loss = 0
+    list_mu, list_logvar = []
+    for batch_idx, (x, _) in enumerate(test_loader):
+        x = x.to(device)
+        reconstruct, mu, logvar = vae(x)
+        list_mu.append(mu)
+        list_logvar.append(logvar)
+        running_loss += loss_mse(reconstruct, x, mu, logvar)
+
+        img, ax = plt.subplots(2,2)
+        ax[0,0].imshow(x[0].squeeze().to('cpu'))
+        ax[0,1].imshow(reconstruct[0].squeeze().detach().cpu())
+        file_path = Path(__file__).parent / "visualization" / f"evaluation_batch_idx_{batch_idx}.png"
+        img.savefig(file_path)
+    
+    print(f"VAE TEST LOSS: {running_loss / (len(test_loader))}")
+    return list_mu, list_logvar
+
+
+def get_guassian_from_vae(vae, data_loader):
+    running_loss = 0
+    list_mu, list_logvar = []
+    for batch_idx, (x, _) in enumerate(data_loader):
+        x = x.to(device)
+        reconstruct, mu, logvar = vae(x)
+        list_mu.append(mu)
+        list_logvar.append(logvar)
+
+        img, ax = plt.subplots(2,2)
+        ax[0,0].imshow(x[0].squeeze().to('cpu'))
+        ax[0,1].imshow(reconstruct[0].squeeze().detach().cpu())
+        file_path = Path(__file__).parent / "visualization" / f"results_batch_idx_{batch_idx}.png"
+        img.savefig(file_path)
+    
+    return list_mu, list_logvar
+
+
+
+def train_vae(vae, train_loader, test_loader):
+    optimizer = torch.optim.Adam(vae.parameters(), lr = lr_vae)
+    mu = []
+    logvar = []
+    for epoch in range(1, epochs_vae + 1):
+        vae.train()
+        running_loss = 0.0
+        for batch_idx, (x, y) in enumerate(train_loader, start=1):
+            x = x.to(device)
+
+            optimizer.zero_grad()
+            reconstruct, mu, logvar = vae(x)
+            loss = loss_mse(reconstruct, x, mu, logvar)
+
+            loss.backward()
+            running_loss+= loss
+            optimizer.step()
+
+            if batch_idx % log_interval == 0:
+                avg = running_loss / log_interval
+                print(f"VAE: Epoch {epoch} [{batch_idx * len(x)}/{len(train_loader.dataset)}]  loss={avg:.4f}")
+                running_loss = 0.0
+    
+    list_mu, list_logvar =get_results_vae(vae, test_loader)
+    return list_mu, list_logvar
+
+
+def evaluate_hyper(model_hyper, target_net, dataloader, device):
     model_hyper.eval()
     total_loss = 0.0
     correct = 0
@@ -114,22 +187,11 @@ def evaluate(model_hyper, target_net, dataloader, device):
 
     return total_loss / total, correct / total
 
-def main():
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-    train_ds = datasets.MNIST(root="./data", train=True, transform=transform, download=True)
-    test_ds = datasets.MNIST(root="./data", train=False, transform=transform, download=True)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size=1024, shuffle=False, num_workers=2, pin_memory=True)
-
-    hyper = HyperNetwork(layer_sizes=target_layer_sizes, embed_dim=embed_dim, head_hidden=head_hidden, use_bias=use_bias).to(device)
-    target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
-
-    optimizer = torch.optim.Adam(hyper.parameters(), lr=lr)
+def train_hyper(hyper, target, train_loader, test_loader):
+    optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, epochs_hyper + 1):
         hyper.train()
         running_loss = 0.0
         for batch_idx, (X, y) in enumerate(train_loader, start=1):
@@ -150,10 +212,10 @@ def main():
             running_loss += loss.item()
             if batch_idx % log_interval == 0:
                 avg = running_loss / log_interval
-                print(f"Epoch {epoch} [{batch_idx * len(X)}/{len(train_loader.dataset)}]  loss={avg:.4f}")
+                print(f"HYPER: Epoch {epoch} [{batch_idx * len(X)}/{len(train_loader.dataset)}]  loss={avg:.4f}")
                 running_loss = 0.0
 
-        val_loss, val_acc = evaluate(hyper, target, test_loader, device)
+        val_loss, val_acc = evaluate_hyper(hyper, target, test_loader, device)
         print(f"Epoch {epoch} completed — test loss: {val_loss:.4f}, test acc: {val_acc:.4f}")
 
         torch.save({
@@ -174,6 +236,32 @@ def main():
         preds = logits.argmax(dim=-1)
     print("Sample predictions:", preds.cpu().tolist())
     print("Ground truth      :", y_sample[:8].tolist())
+
+def main():
+    #transform = transforms.Compose([
+    #    transforms.ToTensor(),
+    #])
+    #train_ds = datasets.MNIST(root="./data", train=True, transform=transform, download=True)
+    #test_ds = datasets.MNIST(root="./data", train=False, transform=transform, download=True)
+    data = get_dataset(name="mnist", preprocess=True, to_tensor=True, flatten=False)
+
+    train = Dataset(data['train'])
+    test = Dataset(data['test'])
+    train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+    test_loader = DataLoader(test, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+
+
+
+
+    
+    vae = VAE(w=28, h=28, ls_dim=5).to(device)
+    mu, logvar = train_vae(vae, train_loader, test_loader)
+
+    hyper = HyperNetwork(layer_sizes=target_layer_sizes, embed_dim=embed_dim, head_hidden=head_hidden, use_bias=use_bias).to(device)
+    target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
+    train_hyper(hyper, target, train_loader, test_loader)
+
+    
 
 if __name__ == "__main__":
     main()
