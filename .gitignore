@@ -222,3 +222,4 @@ __marimo__/
 data/
 vae/checkpoints/
 figures/
+models/

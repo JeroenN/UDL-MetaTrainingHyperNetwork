@@ -14,7 +14,7 @@ _resize_28 = transforms.Resize((28, 28))
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, dict):
         self.dict = dict
-
+        
     def __len__(self):
         return len(self.dict)
     
