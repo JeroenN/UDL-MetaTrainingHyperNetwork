@@ -36,7 +36,7 @@ image_width_height = 28
 target_layer_sizes = [784, 400, 200, 10]
 
 # Hypernetwork internal sizes
-embed_dim = 32           
+embed_dim = 0           
 head_hidden = 256        
 use_bias = True
 
@@ -68,7 +68,7 @@ class HyperNetwork(nn.Module):
         self.embed_dim = embed_dim
         self.condition_dim = condition_dim
         self.use_bias = use_bias
-
+        
         self.layer_embeddings = nn.ParameterList([
             nn.Parameter(torch.randn(embed_dim) * 0.1)
             for _ in range(self.num_layers)
@@ -92,9 +92,12 @@ class HyperNetwork(nn.Module):
     def forward(self, conditioning):
         params = []
         for j in range(self.num_layers):
-            z = self.layer_embeddings[j] 
+            if embed_dim > 0:
+                z = self.layer_embeddings[j] 
+                z_cond = torch.cat([z, conditioning], dim=0)
+            else:
+                z_cond = conditioning
 
-            z_cond = torch.cat([z, conditioning], dim=0)
             head_input = z_cond.unsqueeze(0)  
 
             flat = self.heads[j](head_input).squeeze(0)
@@ -379,7 +382,7 @@ def get_clusters(logits: torch.Tensor, y: torch.Tensor,
         if not return_all_ties and len(best_labels) > 1:
             best_labels = [best_labels[0]]
 
-        result[p] = (best_labels, top_count)
+        result[p] = (best_labels, top_count, total_for_pred)
 
     return result
 
