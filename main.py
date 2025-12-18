@@ -20,20 +20,30 @@ models_folder = Path(__file__).parent / "models"
 
 device = torch.device("cuda")
 batch_size = 256
-epochs_hyper = 100
-epochs_vae = 5
+epochs_hyper = 1000
+epochs_vae = 20
 lr_hyper = 1e-3
 lr_vae = 1e-4
 log_interval = 10
 save_path = "hypernet_checkpoint.pth"
-vae_head_dim = 5
-n_samples_conditioning = 100
+vae_head_dim = 4
+n_samples_conditioning = 200
 steps_innerloop = 1
 steps_outerloop = 10
 
 image_width_height = 28
 
-target_layer_sizes = [784, 400, 200, 10]
+
+
+cluster_using_guassians = True
+
+# Target network
+if cluster_using_guassians:
+    target_layer_sizes = [vae_head_dim*2, 400, 200, 10]
+else:
+    target_layer_sizes = [image_width_height**2, 400, 200, 10]
+
+
 
 # Hypernetwork internal sizes
 embed_dim = 0           
@@ -42,6 +52,8 @@ use_bias = True
 
 #vae
 condition_dim = vae_head_dim * 2 * n_samples_conditioning #*2, because there are two output enconder heads in VAE
+retrain_vae = False
+vae_description = "_head_4"
 
 class TargetNet:
 
@@ -54,7 +66,6 @@ class TargetNet:
         assert len(params) == self.num_layers
         out = x.view(x.shape[0], -1)
         for i, (W, b) in enumerate(params):
-            # W expected shape (out_features, in_features)
             out = F.linear(out, W, b)
             if i != self.num_layers - 1:
                 out = self.activation(out)
@@ -139,7 +150,7 @@ def evaluate_vae(vae, test_loader):
     return list_mu, list_logvar
 
 
-def get_gaussian_from_vae(vae, x, idx, visualize: bool = True):
+def get_gaussian_from_vae(vae, x, idx, visualize: bool = False):
     vae.eval()
     reconstruct, mu, logvar = vae(x)
 
@@ -180,31 +191,6 @@ def train_vae(vae, train_loader, test_loader):
     evaluate_vae(vae, test_loader)
     return vae
 
-def evaluate_hyper(model_hyper, target_net, vae, dataloader, device):
-    model_hyper.eval()
-    total_loss = 0.0
-    correct = 0
-    total = 0
-    criterion = nn.CrossEntropyLoss()
-    with torch.no_grad():
-        for X, y in dataloader:
-            X = X.to(device)
-            y = y.to(device)
-            mu, logvar = get_gaussian_from_vae(vae,X, 0, visualize=False)
-            conditioning_vector = torch.concatenate((mu[:n_samples_conditioning], logvar[:n_samples_conditioning])).view(-1)
-            params = model_hyper(conditioning_vector)
-            params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
-
-            logits = target_net.forward(X, params)
-            loss = criterion(logits, y)
-            total_loss += loss.item() * X.shape[0]
-
-            preds = logits.argmax(dim=-1)
-            correct += (preds == y).sum().item()
-            total += X.shape[0]
-
-    return total_loss / total, correct / total
-
 # Loads the batches for one specific task into memory, ready to be used for meta learning
 def create_batches_innerloop(dataset_name , number_of_batches):
     data = get_dataset(name=dataset_name, preprocess=True, to_tensor=True, flatten=False)
@@ -215,23 +201,28 @@ def create_batches_innerloop(dataset_name , number_of_batches):
     data_y = torch.Tensor()
     data_mu = torch.Tensor()
     data_logvar = torch.Tensor()
+    
+    vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
+    file_name = test_dataset_name + vae_description + ".pth"
+    vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
+    vae.to(device)
 
     for batch_idx, (X, y) in enumerate(dataset_loader):
         if batch_idx == number_of_batches:
             break
-
+        
+        mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
+        data_mu = mu.unsqueeze(0)
+        data_logvar = logvar.unsqueeze(0)
+        
         if batch_idx == 0:
-            data_x = X.unsqueeze(0) 
+            if cluster_using_guassians:
+                data_x = torch.cat((mu, logvar), 1)
+                data_x = data_x.unsqueeze(0) #Add extra dimension before batch dimension, so that the batches can be looped over
+            else:
+                data_x = X.unsqueeze(0) 
+
             data_y = y.unsqueeze(0)
-
-            vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
-            file_name = test_dataset_name + ".pth"
-            vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
-            vae.to(device)
-
-            mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
-            data_mu = mu.unsqueeze(0)
-            data_logvar = logvar.unsqueeze(0)
             continue
         
         data_x = torch.cat((data_x, X.unsqueeze(0)), 0)
@@ -249,34 +240,38 @@ def create_batches_outerloop():
         train = Dataset(data['test'])
         loaders.append((name, DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)))
         
-    data_x = torch.Tensor() 
-    data_y = torch.Tensor()
-    data_mu = torch.Tensor()
-    data_logvar = torch.Tensor()
+    data_x = []
+    data_y = []
+    data_mu = []
+    data_logvar = []
+
+    vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
+    file_name = test_dataset_name + vae_description + ".pth"
+    vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
+    vae.to(device)
+
     for (name, data_loader) in loaders:
         for batch_idx, (X, y) in enumerate(data_loader):
             if batch_idx == 1:
                 break
-            
-            if batch_idx == 0:
-                data_x = X.unsqueeze(0) 
-                data_y = y.unsqueeze(0)
-                file_name = name + ".pth"
 
-                vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
-                file_name = test_dataset_name + ".pth"
-                vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
-                vae.to(device)
+            mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
 
-                mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
-                data_mu = mu.unsqueeze(0)
-                data_logvar = logvar.unsqueeze(0)
-                continue
+            data_mu.append(mu.unsqueeze(0)) #Add extra dimension before batch dimension, so that the batches can be looped over
+            data_logvar.append(logvar.unsqueeze(0))
+
+            data_y.append(y.unsqueeze(0))
+            if cluster_using_guassians:
+                data_x.append(torch.cat((mu, logvar), 1).unsqueeze(0))
+            else:
+                data_x.append(X.unsqueeze(0))
+
+
             
-            data_x = torch.cat((data_x, X.unsqueeze(0)), 0)
-            data_y = torch.cat((data_y, y.unsqueeze(0)), 0)
-            data_mu = torch.cat((data_mu, mu.unsqueeze(0)), 0)
-            data_logvar = torch.cat((data_logvar, logvar.unsqueeze(0)), 0)
+    data_x = torch.cat(data_x, 0)
+    data_y = torch.cat(data_y, 0)
+    data_mu = torch.cat(data_mu, 0)
+    data_logvar = torch.cat(data_logvar, 0)
 
     return data_x, data_y, data_mu, data_logvar
       
@@ -301,7 +296,7 @@ def inner_loop(hyper, target, optimizer, criterion):
         logits = target.forward(X, params)
         loss = criterion(logits, y)
 
-        loss.backward()
+        loss.backward(create_graph=True)
         optimizer.step()
     
     return hyper
@@ -326,10 +321,7 @@ def outer_loop(hyper, target, optimizer, criterion):
         losses.append(criterion(logits, y))
 
 
-    total_loss = 0
-    for loss in losses:
-        total_loss += loss
-
+    total_loss = torch.stack(losses).mean()
     total_loss.backward()
     optimizer.step()
     return hyper
@@ -389,7 +381,7 @@ def get_clusters(logits: torch.Tensor, y: torch.Tensor,
 
 def evaluate_clustering(hyper, target):
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
-    file_name = test_dataset_name + ".pth"
+    file_name = test_dataset_name + vae_description + ".pth"
     vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
     vae.to(device)
 
@@ -403,13 +395,18 @@ def evaluate_clustering(hyper, target):
         X = X.to(device)
         mu, logvar = get_gaussian_from_vae(vae,X, batch_idx, visualize=batch_idx==1)
         conditioning_vector = torch.concatenate((mu[:n_samples_conditioning], logvar[:n_samples_conditioning])).view(-1)
-        X = X.view(X.shape[0], -1)
+
 
         if batch_idx == 0:
             params = hyper(conditioning_vector)
             params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
         
-        logits = target.forward(X, params)
+        if cluster_using_guassians:
+            input = torch.cat((mu, logvar), 1)
+        else:
+            input = X.view(X.shape[0], -1)
+            
+        logits = target.forward(input, params)
         if batch_idx == 0:
             all_logits = logits
             all_y = y
@@ -432,47 +429,6 @@ def meta_train_hyper(hyper, target):
         if epoch != 0 and epoch % log_interval == 0:
             evaluate_clustering(hyper, target)
 
-def train_hyper_old(hyper, target, vae, train_loader, test_loader):
-    optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
-    criterion = nn.CrossEntropyLoss()
-
-    for epoch in range(1, epochs_hyper + 1):
-        hyper.train()
-        running_loss = 0.0
-        for batch_idx, (X, y) in enumerate(train_loader, start=1):
-            X = X.to(device)
-            y = y.to(device)
-            mu, logvar = get_gaussian_from_vae(vae,X, batch_idx, visualize=batch_idx==1)
-            conditioning_vector = torch.concatenate((mu[:n_samples_conditioning], logvar[:n_samples_conditioning])).view(-1)
-            X = X.view(X.shape[0], -1)
-
-            optimizer.zero_grad()
-
-            params = hyper(conditioning_vector)
-            params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
-
-            logits = target.forward(X, params)
-            loss = criterion(logits, y)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-            if batch_idx % log_interval == 0:
-                avg = running_loss / log_interval
-                print(f"HYPER: Epoch {epoch} [{batch_idx * len(X)}/{len(train_loader.dataset)}]  loss={avg:.4f}")
-                running_loss = 0.0
-
-        val_loss, val_acc = evaluate_hyper(hyper, target, test_loader, device)
-        print(f"Epoch {epoch} completed — test loss: {val_loss:.4f}, test acc: {val_acc:.4f}")
-
-        torch.save({
-            'epoch': epoch,
-            'hyper_state_dict': hyper.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-        }, save_path)
-
-    print("Training finished. Checkpoint saved to", save_path)
-    return hyper
 
 def train_vaes():
     dataset_names = ['fashion_mnist', 'kmnist', 'mnist']
@@ -485,11 +441,12 @@ def train_vaes():
         test_loader = DataLoader(test, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
         vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(device)
         vae = train_vae(vae, train_loader, test_loader)
-        file_name = name + ".pth"
+        file_name = name + vae_description + ".pth"
         torch.save({'hyper_state_dict': vae.state_dict()}, models_folder / file_name)
 
 def main():
-    #train_vaes()
+    if retrain_vae:
+        train_vaes()
     hyper = HyperNetwork(layer_sizes=target_layer_sizes, embed_dim=embed_dim, condition_dim=condition_dim, head_hidden=head_hidden, use_bias=use_bias).to(device)
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
     hyper.to(device)
