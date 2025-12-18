@@ -288,7 +288,7 @@ def inner_loop(hyper, target, optimizer, criterion):
         conditioning_vector = torch.concatenate((mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), 0).view(-1)
         X = X.view(X.shape[0], -1)
         
-        optimizer.zero_grad()
+        #optimizer.zero_grad()
 
         params = hyper(conditioning_vector)
         params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
@@ -296,8 +296,9 @@ def inner_loop(hyper, target, optimizer, criterion):
         logits = target.forward(X, params)
         loss = criterion(logits, y)
 
-        loss.backward(create_graph=True)
-        optimizer.step()
+        #loss.backward(create_graph=True)
+        torch.autograd.grad(loss, hyper.parameters(), create_graph=True, allow_unused=True)
+        #optimizer.step()
     
     return hyper
 
