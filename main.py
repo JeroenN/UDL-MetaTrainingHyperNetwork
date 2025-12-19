@@ -13,6 +13,10 @@ from pathlib import Path
 from dataset_loading import get_dataset, Dataset, DATASET_NAMES
 import random
 from typing import Dict, List, Optional, Tuple
+from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
+import numpy as np
+
 
 train_dataset_names = ['fashion_mnist', 'kmnist']
 test_dataset_name = "mnist"
@@ -22,18 +26,19 @@ device = torch.device("cuda")
 batch_size = 256
 epochs_hyper = 1000
 epochs_vae = 20
-lr_hyper = 1e-3
+lr_hyper = 1e-4
 lr_vae = 1e-4
 log_interval = 10
 save_path = "hypernet_checkpoint.pth"
-vae_head_dim = 4
+vae_head_dim = 10
 n_samples_conditioning = 200
 steps_innerloop = 1
 steps_outerloop = 10
 
 image_width_height = 28
 
-
+use_contrastive_loss = True
+contrastive_temp = 0.07
 
 cluster_using_guassians = True
 
@@ -53,7 +58,7 @@ use_bias = True
 #vae
 condition_dim = vae_head_dim * 2 * n_samples_conditioning #*2, because there are two output enconder heads in VAE
 retrain_vae = False
-vae_description = "_head_4"
+vae_description = "_head_10"
 
 class TargetNet:
 
@@ -191,45 +196,44 @@ def train_vae(vae, train_loader, test_loader):
     evaluate_vae(vae, test_loader)
     return vae
 
+def create_batches(loader, number_of_batches, vae):
+    data_x = []
+    data_y = []
+    data_mu = []
+    data_logvar = []
+    for batch_idx, (X, y) in enumerate(loader):
+        if batch_idx == number_of_batches:
+            break
+
+        mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
+
+        data_mu.append(mu.unsqueeze(0)) #Add extra dimension before batch dimension, so that the batches can be looped over
+        data_logvar.append(logvar.unsqueeze(0))
+
+        data_y.append(y.unsqueeze(0))
+        if cluster_using_guassians:
+            data_x.append(torch.cat((mu, logvar), 1).unsqueeze(0))
+        else:
+            data_x.append(X.unsqueeze(0))
+
+    data_x = torch.cat(data_x, 0)
+    data_y = torch.cat(data_y, 0)
+    data_mu = torch.cat(data_mu, 0)
+    data_logvar = torch.cat(data_logvar, 0)
+    return data_x, data_y, data_mu, data_logvar
+
 # Loads the batches for one specific task into memory, ready to be used for meta learning
 def create_batches_innerloop(dataset_name , number_of_batches):
     data = get_dataset(name=dataset_name, preprocess=True, to_tensor=True, flatten=False)
     train = Dataset(data['train'])
-    dataset_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
-
-    data_x = torch.Tensor() 
-    data_y = torch.Tensor()
-    data_mu = torch.Tensor()
-    data_logvar = torch.Tensor()
+    loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
     
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
     file_name = test_dataset_name + vae_description + ".pth"
     vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
     vae.to(device)
 
-    for batch_idx, (X, y) in enumerate(dataset_loader):
-        if batch_idx == number_of_batches:
-            break
-        
-        mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
-        data_mu = mu.unsqueeze(0)
-        data_logvar = logvar.unsqueeze(0)
-        
-        if batch_idx == 0:
-            if cluster_using_guassians:
-                data_x = torch.cat((mu, logvar), 1)
-                data_x = data_x.unsqueeze(0) #Add extra dimension before batch dimension, so that the batches can be looped over
-            else:
-                data_x = X.unsqueeze(0) 
-
-            data_y = y.unsqueeze(0)
-            continue
-        
-        data_x = torch.cat((data_x, X.unsqueeze(0)), 0)
-        data_y = torch.cat((data_y, y.unsqueeze(0)), 0)
-        data_mu = torch.cat((data_mu, mu.unsqueeze(0)), 0)
-        data_logvar = torch.cat((data_logvar, logvar.unsqueeze(0)), 0)
-
+    data_x, data_y, data_mu, data_logvar = create_batches(loader, number_of_batches, vae)
     return data_x, data_y, data_mu, data_logvar
 
 # Loads the batches into memory for all tasks, ready to be used for meta learning
@@ -240,38 +244,29 @@ def create_batches_outerloop():
         train = Dataset(data['test'])
         loaders.append((name, DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)))
         
-    data_x = []
-    data_y = []
-    data_mu = []
-    data_logvar = []
+    all_data_x = []
+    all_data_y = []
+    all_data_mu = []
+    all_data_logvar = []
 
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
     file_name = test_dataset_name + vae_description + ".pth"
     vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
     vae.to(device)
 
-    for (name, data_loader) in loaders:
-        for batch_idx, (X, y) in enumerate(data_loader):
-            if batch_idx == 1:
-                break
-
-            mu, logvar = get_gaussian_from_vae(vae, X.to(device), 0, visualize=False)
-
-            data_mu.append(mu.unsqueeze(0)) #Add extra dimension before batch dimension, so that the batches can be looped over
-            data_logvar.append(logvar.unsqueeze(0))
-
-            data_y.append(y.unsqueeze(0))
-            if cluster_using_guassians:
-                data_x.append(torch.cat((mu, logvar), 1).unsqueeze(0))
-            else:
-                data_x.append(X.unsqueeze(0))
+    for (name, loader) in loaders:
+        data_x, data_y, data_mu, data_logvar = create_batches(loader, 1, vae)
+        all_data_x.append(data_x)
+        all_data_y.append(data_y)
+        all_data_mu.append(data_mu)
+        all_data_logvar.append(data_logvar)
 
 
             
-    data_x = torch.cat(data_x, 0)
-    data_y = torch.cat(data_y, 0)
-    data_mu = torch.cat(data_mu, 0)
-    data_logvar = torch.cat(data_logvar, 0)
+    data_x = torch.cat(all_data_x, 0)
+    data_y = torch.cat(all_data_y, 0)
+    data_mu = torch.cat(all_data_mu, 0)
+    data_logvar = torch.cat(all_data_logvar, 0)
 
     return data_x, data_y, data_mu, data_logvar
       
@@ -294,7 +289,11 @@ def inner_loop(hyper, target, optimizer, criterion):
         params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
 
         logits = target.forward(X, params)
-        loss = criterion(logits, y)
+        if use_contrastive_loss:
+            loss = contrastive_loss_new(logits, y)
+            print(f"Inner loop loss: {loss.item()}")
+        else:
+            loss = criterion(logits, y)
 
         #loss.backward(create_graph=True)
         torch.autograd.grad(loss, hyper.parameters(), create_graph=True, allow_unused=True)
@@ -319,15 +318,23 @@ def outer_loop(hyper, target, optimizer, criterion):
         params = [(W.to(device), b.to(device) if b is not None else None) for (W, b) in params]
 
         logits = target.forward(X, params)
-        losses.append(criterion(logits, y))
+
+        if use_contrastive_loss:
+            losses.append(contrastive_loss_new(logits, y))
+        else:
+            losses.append(criterion(logits, y))
+
+        #losses.append(criterion(logits, y))
 
 
     total_loss = torch.stack(losses).mean()
     total_loss.backward()
     optimizer.step()
+    print(f"Outerloop loss: {total_loss.item()}")
     return hyper
 
-def get_clusters(logits: torch.Tensor, y: torch.Tensor,
+
+def get_clusters_cross_entropy(logits: torch.Tensor, y: torch.Tensor,
                  return_all_ties: bool = True
                 ) -> Dict[int, Tuple[Optional[List[int]], int]]:
     """
@@ -379,6 +386,42 @@ def get_clusters(logits: torch.Tensor, y: torch.Tensor,
 
     return result
 
+def kmeans_accuracy(x: torch.Tensor, y: torch.Tensor, n_clusters: int = 10):
+    """
+    Perform KMeans clustering on x and compute accuracy against y.
+
+    Args:
+        x (torch.Tensor): Input features [n, 10]
+        y (torch.Tensor): True labels [n, 1]
+        n_clusters (int): Number of clusters
+
+    Returns:
+        float: clustering accuracy
+    """
+    x = F.normalize(x, p=2, dim=1)
+    x_np = x.cpu().detach().numpy()
+    y_np = y.cpu().detach().numpy().flatten()
+    
+    # Fit KMeans
+    kmeans = KMeans(n_clusters=n_clusters, n_init=20, random_state=42)
+    pred = kmeans.fit_predict(x_np)
+    
+    # Compute best mapping between cluster labels and true labels
+    D = np.zeros((n_clusters, n_clusters), dtype=np.int64)
+    for i in range(n_clusters):
+        for j in range(n_clusters):
+            D[i, j] = np.sum((pred == i) & (y_np == j))
+    
+    row_ind, col_ind = linear_sum_assignment(-D)
+    mapping = {row: col for row, col in zip(row_ind, col_ind)}
+    mapped_pred = np.array([mapping[p] for p in pred])
+    
+    accuracy = np.mean(mapped_pred == y_np)
+    return accuracy
+
+#def contrastive_loss(x: torch.Tensor, y: torch.Tensor):
+#    x = F.normalize(x, p=2, dim = 1)
+#    torch.matmul(x, x.T)
 
 def evaluate_clustering(hyper, target):
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
@@ -416,9 +459,35 @@ def evaluate_clustering(hyper, target):
         all_logits = torch.concat((all_logits, logits), 0)
         all_y = torch.concat((all_y, y), 0)
     
-    print(get_clusters(all_logits, all_y))
-        
-        
+    if use_contrastive_loss:
+        print(f"ACCURACY: {kmeans_accuracy(all_logits, all_y)}")
+    else:
+        print(get_clusters_cross_entropy(all_logits, all_y))
+
+
+def contrastive_loss_new(X, y):
+    X = F.normalize(X, p=2, dim=1)
+
+    cos_sim_matrix = torch.matmul(X, X.T)
+    y = y.unsqueeze(0)
+    # torch.eye gives the identity matrix, with ~ we are saying exclude this. So it
+    # excludes the pairs where the indices are the same
+    mask_positive = (y == y.T) & (~torch.eye(X.shape[0], dtype=bool, device=device))  
+    mask_negative = ~mask_positive
+
+    cos_sim_matrix = cos_sim_matrix / contrastive_temp
+
+    loss = 0
+    for i in range(X.shape[0]):
+        pos_cos_sim = cos_sim_matrix[i][mask_positive[i]]
+        neg_cos_sim = cos_sim_matrix[i][mask_negative[i]]
+        numerator = torch.exp(pos_cos_sim).sum()
+        denominator = torch.exp(neg_cos_sim).sum() + numerator
+        loss += torch.log(numerator / denominator)
+
+    return loss / X.shape[0]
+
+
 def meta_train_hyper(hyper, target):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
     criterion = nn.CrossEntropyLoss()
