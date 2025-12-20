@@ -28,7 +28,7 @@ epochs_hyper = 1000
 epochs_vae = 20
 lr_hyper = 1e-4
 lr_vae = 1e-4
-log_interval = 10
+log_interval = 5
 save_path = "hypernet_checkpoint.pth"
 vae_head_dim = 10
 n_samples_conditioning = 200
@@ -229,7 +229,7 @@ def create_batches_innerloop(dataset_name , number_of_batches):
     loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
     
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
-    file_name = test_dataset_name + vae_description + ".pth"
+    file_name = dataset_name + vae_description + ".pth"
     vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
     vae.to(device)
 
@@ -249,12 +249,14 @@ def create_batches_outerloop():
     all_data_mu = []
     all_data_logvar = []
 
-    vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
-    file_name = test_dataset_name + vae_description + ".pth"
-    vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
-    vae.to(device)
+
 
     for (name, loader) in loaders:
+        vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
+        file_name = name + vae_description + ".pth"
+        vae.load_state_dict(torch.load(models_folder / file_name)['hyper_state_dict'])
+        vae.to(device)
+
         data_x, data_y, data_mu, data_logvar = create_batches(loader, 1, vae)
         all_data_x.append(data_x)
         all_data_y.append(data_y)
