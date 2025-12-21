@@ -25,6 +25,7 @@ def preprocess_image(
     img: Union[Image.Image, np.ndarray, torch.Tensor],
     to_tensor: bool = True,
     flatten: bool = True,
+    resize: int = 28
 ) -> Union[torch.Tensor, Image.Image]:
     """
     Preprocess a single image for the MLP.
@@ -44,13 +45,12 @@ def preprocess_image(
         if img.mode != "L":
             img = img.convert("L")
         # Resize to 28x28
-        img = _resize_28(img)
+        img = transforms.Resize((resize, resize))(img)#_resize_28(img)
 
         if not to_tensor:
             return img
 
-        # Convert to tensor: shape (1, 28, 28), float32 in [0, 1]
-        x = _to_tensor(img)  # (1, 28, 28)
+        x = _to_tensor(img)  
 
     elif isinstance(img, torch.Tensor):
         x = img
@@ -70,7 +70,7 @@ def preprocess_image(
             x = x.mean(dim=0, keepdim=True)  # (1, H, W)
 
         # Resize to a 28x28 MNIST-like vector
-        x = _resize_28(x)
+        x = transforms.Resize((resize, resize))(x) #_resize_28(x)
 
     else:
         raise TypeError(f"Unsupported image type: {type(img)}")
@@ -82,7 +82,7 @@ def preprocess_image(
     return x
 
 
-def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
+def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: int = 28):
     """
     Returns a HuggingFace-compatible batch transform function that:
     - Reads 'image' and 'label' from a batch dict.
@@ -95,7 +95,7 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
         imgs = batch["image"]
         labels = batch["label"]
 
-        xs = [preprocess_image(im, to_tensor=to_tensor, flatten=flatten) for im in imgs]
+        xs = [preprocess_image(im, to_tensor=to_tensor, flatten=flatten, resize=resize) for im in imgs]
 
         if to_tensor:
             x = torch.stack(xs)  # (B, 784) or (B, 1, 28, 28)
@@ -108,7 +108,7 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
 
 
 def get_dataset(
-    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True
+    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True, resize: int = 28
 ):
     """
     Returns a dataset function based on the dataset name.
@@ -150,7 +150,7 @@ def get_dataset(
 
     # Apply preprocessing if arg is True
     if preprocess:
-        transform_fn = _hf_batch_transform(to_tensor=to_tensor, flatten=flatten)
+        transform_fn = _hf_batch_transform(to_tensor=to_tensor, flatten=flatten, resize=resize)
 
         # Apply transform to all splits (e.g. train/test)
         if hasattr(dataset, "keys"):
