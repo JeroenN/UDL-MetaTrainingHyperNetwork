@@ -108,12 +108,16 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True):
 
 
 def get_dataset(
-    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True
+    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True, class_limit: int = None
 ):
     """
     Returns a dataset function based on the dataset name.
 
     :param name: Name of the dataset ('mnist', 'cifar10', 'imagenet').
+    :param preprocess: Whether to apply preprocessing transforms.
+    :param to_tensor: Whether to convert images to torch.Tensor.
+    :param flatten: Whether to flatten images to 1D vectors.
+    :param class_limit: If set, limits the dataset to the first N classes.
     :return: Corresponding dataset loading function.
     """
     if name == "mnist":  # 1 channel
@@ -148,6 +152,10 @@ def get_dataset(
     else:
         raise ValueError(f"Dataset {name} is not supported.")
 
+    # Apply class limit filter if specified
+    if class_limit is not None:
+        dataset = dataset.filter(lambda ex: ex["label"] < class_limit)
+        
     # Apply preprocessing if arg is True
     if preprocess:
         transform_fn = _hf_batch_transform(to_tensor=to_tensor, flatten=flatten)

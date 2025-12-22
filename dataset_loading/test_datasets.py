@@ -1,7 +1,7 @@
 from dataset import *
 
 DATASET_NAMES = ["mnist", "fashion_mnist", "kmnist", "hebrew_chars", "math_shapes"]
-
+CLASS_LIMIT = 10
 
 def main():
     # Quick interactive check: prints + plots for each dataset
@@ -10,9 +10,10 @@ def main():
         try:
             data = get_dataset(
                 name,
-                preprocess=True,
-                to_tensor=True,
-                flatten=True,
+                preprocess = True,
+                to_tensor = True,
+                flatten = True,
+                class_limit = CLASS_LIMIT
             )
             print(f"\n\nDataset: {name}")
             print("Shape:", data.shape)
