@@ -5,10 +5,9 @@ import torch
 from PIL import Image
 from typing import Union
 from matplotlib import pyplot as plt
-
+import math
 
 _to_tensor = transforms.ToTensor()
-_resize_28 = transforms.Resize((28, 28))
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -44,8 +43,8 @@ def preprocess_image(
         # Ensure grayscale
         if img.mode != "L":
             img = img.convert("L")
-        # Resize to 28x28
-        img = transforms.Resize((resize, resize))(img)#_resize_28(img)
+        # Resize to NxN
+        img = transforms.Resize((resize, resize))(img)
 
         if not to_tensor:
             return img
@@ -108,7 +107,7 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
 
 
 def get_dataset(
-    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True, class_limit: int = None
+    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True, resize: int = 28, class_limit: int = None
 ):
     """
     Returns a dataset function based on the dataset name.
@@ -209,14 +208,8 @@ def print_dataset_info(name: str, ds, split: str = "train"):
         print("No 'x' or 'image' key found in example – check transforms.")
 
 
-def show_random_examples(ds, split: str = "train", n: int = 8, title: str = ""):
-    """
-    Plot a few random examples from a (preprocessed) dataset split.
 
-    Assumes each example has:
-      - 'x': flattened (784,) OR (1, 28, 28)
-      - 'y': label
-    """
+def show_random_examples(ds, split: str = "train", n: int = 8, title: str = ""):
     if hasattr(ds, "keys"):
         if split not in ds:
             split = list(ds.keys())[0]
@@ -237,14 +230,18 @@ def show_random_examples(ds, split: str = "train", n: int = 8, title: str = ""):
         y = ex["y"]
 
         if x.ndim == 1:
-            img = x.view(28, 28)
+            side = int(math.isqrt(x.numel()))
+            if side * side != x.numel():
+                raise ValueError(f"Cannot reshape vector of length {x.numel()} into square image.")
+            img = x.view(side, side)
         elif x.ndim == 3:
-            img = x.squeeze(0)  # (1, 28, 28) -> (28, 28)
+            # (1, H, W) -> (H, W)
+            img = x.squeeze(0)
         else:
             raise ValueError(f"Unexpected x.shape: {x.shape}")
 
         ax.imshow(img.cpu().numpy(), cmap="gray")
-        ax.set_title(str(y))
+        ax.set_title(str(int(y)) if torch.is_tensor(y) else str(y))
         ax.axis("off")
 
     if title:
