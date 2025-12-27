@@ -224,3 +224,4 @@ vae/checkpoints/
 figures/
 models/
 visualization/
+inspect.py

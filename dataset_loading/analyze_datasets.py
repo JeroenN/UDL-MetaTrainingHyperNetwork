@@ -1,4 +1,3 @@
-
 import os
 from collections import Counter
 
@@ -10,8 +9,10 @@ from .dataset import get_dataset, preprocess_image
 OUTPUT_DIR = "figures/datasets"
 DATASET_NAMES = ["mnist", "fashion_mnist", "kmnist", "hebrew_chars", "math_shapes"]
 
+
 def ensure_outdir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 
 def compute_class_distribution(ds, split="train"):
     """Return a Counter(label -> count) for the given split."""
