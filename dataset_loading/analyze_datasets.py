@@ -28,7 +28,12 @@ def compute_class_distribution(ds, split="train"):
 
 
 def save_class_distribution_plot(name, label_counts):
-    """Save a class distribution bar plot as transparent PNG."""
+    """
+    Save a class distribution bar plot as transparent PNG.
+    
+    :param name: Dataset name (for output file naming).
+    :param label_counts: Counter mapping label -> count.
+    """
     classes = sorted(label_counts.keys())
     counts = [label_counts[c] for c in classes]
 
@@ -49,6 +54,10 @@ def save_one_example_per_class(name, ds, split="train"):
     """
     Save a grid image with one random preprocessed example per class.
     Uses preprocess_image to enforce grayscale 28x28.
+
+    :param name: Dataset name (for output file naming).
+    :param ds: The dataset object.
+    :param split: Which split to use ('train', 'test', etc.).
     """
     if hasattr(ds, "keys"):
         if split not in ds:
@@ -88,16 +97,15 @@ def save_one_example_per_class(name, ds, split="train"):
         axes = np.array(axes).reshape(1, -1)
 
     for ax in axes.ravel():
-        ax.axis("off")  # default off; we'll turn on where we draw
+        ax.axis("off")
 
     for i, c in enumerate(sorted(chosen_indices.keys())):
         idx = chosen_indices[c]
         ex = dsplit[idx]
         raw_img = ex["image"]
 
-        # Use your preprocessing to get (1, 28, 28) tensor
         x = preprocess_image(raw_img, to_tensor=True, flatten=False)  # (1, 28, 28)
-        img = x.squeeze(0).cpu().numpy()  # (28, 28)
+        img = x.squeeze(0).cpu().numpy()  
 
         r = i // n_cols
         col = i % n_cols

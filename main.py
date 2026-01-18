@@ -23,7 +23,7 @@ innerloop_dataset_names = ['math_shapes']
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 batch_size_outerloop = 256
 batch_size_innerloop = 128
 epochs_hyper = 1000
