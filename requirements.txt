@@ -4,3 +4,6 @@ torchvision
 numpy
 ipython
 matplotlib
+scipy
+scikit-learn
+pyyaml
