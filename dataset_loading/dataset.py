@@ -5,27 +5,30 @@ import torch
 from PIL import Image
 from typing import Union
 from matplotlib import pyplot as plt
+import math
 
+# import fiftyone as fo
+# from fiftyone.utils.huggingface import load_from_hub
 
 _to_tensor = transforms.ToTensor()
-_resize_28 = transforms.Resize((28, 28))
 
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, dict):
         self.dict = dict
-        
+
     def __len__(self):
         return len(self.dict)
-    
+
     def __getitem__(self, index):
-        return self.dict[index]['x'], self.dict[index]['y']
-    
+        return self.dict[index]["x"], self.dict[index]["y"]
+
+
 def preprocess_image(
     img: Union[Image.Image, np.ndarray, torch.Tensor],
     to_tensor: bool = True,
     flatten: bool = True,
-    resize: int = 28
+    resize: int = 28,
 ) -> Union[torch.Tensor, Image.Image]:
     """
     Preprocess a single image for the MLP.
@@ -35,6 +38,12 @@ def preprocess_image(
     2. Resize to 28x28.
     3. Optionally convert to torch.Tensor.
     4. Optionally flatten to a 784-dim vector.
+
+    :param img: Input image (PIL Image, numpy array, or torch.Tensor).
+    :param to_tensor: Whether to convert to torch.Tensor.
+    :param flatten: Whether to flatten to 1D vector.
+    :param resize: Size to resize the image to (resize x resize).
+    :return: Preprocessed image as torch.Tensor or PIL Image.
     """
 
     if isinstance(img, np.ndarray):
@@ -44,13 +53,13 @@ def preprocess_image(
         # Ensure grayscale
         if img.mode != "L":
             img = img.convert("L")
-        # Resize to 28x28
-        img = transforms.Resize((resize, resize))(img)#_resize_28(img)
+        # Resize to NxN
+        img = transforms.Resize((resize, resize))(img)
 
         if not to_tensor:
             return img
 
-        x = _to_tensor(img)  
+        x = _to_tensor(img)
 
     elif isinstance(img, torch.Tensor):
         x = img
@@ -70,7 +79,7 @@ def preprocess_image(
             x = x.mean(dim=0, keepdim=True)  # (1, H, W)
 
         # Resize to a 28x28 MNIST-like vector
-        x = transforms.Resize((resize, resize))(x) #_resize_28(x)
+        x = transforms.Resize((resize, resize))(x)  # _resize_28(x)
 
     else:
         raise TypeError(f"Unsupported image type: {type(img)}")
@@ -84,18 +93,22 @@ def preprocess_image(
 
 def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: int = 28):
     """
-    Returns a HuggingFace-compatible batch transform function that:
-    - Reads 'image' and 'label' from a batch dict.
-    - Applies preprocess_image to each image.
-    - Returns {'x': tensor_batch, 'y': labels} if to_tensor=True.
-      Otherwise returns {'image': processed_images, 'label': labels}.
+    Returns a HuggingFace-compatible batch transform function which applies preprocessing to a batch of images.
+
+    :param to_tensor: Whether to convert images to torch.Tensor.
+    :param flatten: Whether to flatten images to 1D vectors.
+    :param resize: Size to resize the images to (resize x resize).
+    :return: A function that takes a batch dict and returns a transformed batch dict.
     """
 
     def transform(batch):
         imgs = batch["image"]
         labels = batch["label"]
 
-        xs = [preprocess_image(im, to_tensor=to_tensor, flatten=flatten, resize=resize) for im in imgs]
+        xs = [
+            preprocess_image(im, to_tensor=to_tensor, flatten=flatten, resize=resize)
+            for im in imgs
+        ]
 
         if to_tensor:
             x = torch.stack(xs)  # (B, 784) or (B, 1, 28, 28)
@@ -107,13 +120,35 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
     return transform
 
 
+def split_dataset_by_classes(dataset, class_limit):
+    max_label = max(dataset["train"]["label"])
+    num_classes = max_label + 1
+
+    datasets = []
+    for start in range(0, num_classes, class_limit):
+        end = start + class_limit
+        ds = dataset.filter(lambda ex, s=start, e=end: s <= ex["label"] < e)
+        datasets.append(ds)
+
+    return datasets
+
+
 def get_dataset(
-    name: str, preprocess: bool = False, to_tensor: bool = True, flatten: bool = True, resize: int = 28
+    name: str,
+    preprocess: bool = False,
+    to_tensor: bool = True,
+    flatten: bool = True,
+    resize: int = 28,
+    class_limit: int = None,
 ):
     """
     Returns a dataset function based on the dataset name.
 
     :param name: Name of the dataset ('mnist', 'cifar10', 'imagenet').
+    :param preprocess: Whether to apply preprocessing transforms.
+    :param to_tensor: Whether to convert images to torch.Tensor.
+    :param flatten: Whether to flatten images to 1D vectors.
+    :param class_limit: Maximum number of classes per split.
     :return: Corresponding dataset loading function.
     """
     if name == "mnist":  # 1 channel
@@ -133,6 +168,13 @@ def get_dataset(
         dataset = load_dataset("tanganke/kmnist")
         # Classify images from the KMNIST dataset into one of the 10 classes, representing different Japanese characters.
 
+    # elif name == "asl_mnist": # 1 channel
+    # dataset = load_from_hub("Voxel51/American-Sign-Language-MNIST", max_samples=200)
+    # The FiftyOne dataset contains 34,627 samples of American Sign Language (ASL) alphabet images,
+    # converted from the original Kaggle Sign Language MNIST dataset into a format optimized for computer vision workflows.
+    # There are 34,627 rows and the size of downloaded files is 18.8 MB.
+    # 24 classes ( Labels 9 (J) and 25 (Z) are excluded as these letters require motion in ASL)
+
     elif name == "hebrew_chars":  # 1 channel
         dataset = load_dataset("sivan22/hebrew-handwritten-characters")
         # HDD_v0 consists of images of isolated Hebrew characters together with training and test sets subdivision.
@@ -142,25 +184,29 @@ def get_dataset(
         dataset = load_dataset("prithivMLmods/Math-Shapes")
         # The Math-Symbols dataset is a collection of images representing various mathematical symbols.
         # Size: 131MB (downloaded dataset files), 118MB (auto-connected Parquet files)
-        # 20,000 Rows of 224x224 RGB images
-        # Classes: 128 different mathematical symbols (e.g., circle, plus, minus, etc.)
 
     else:
         raise ValueError(f"Dataset {name} is not supported.")
 
+    datasets = (
+        split_dataset_by_classes(dataset, class_limit)
+        if class_limit is not None
+        else [dataset]
+    )
+
     # Apply preprocessing if arg is True
     if preprocess:
-        transform_fn = _hf_batch_transform(to_tensor=to_tensor, flatten=flatten, resize=resize)
+        transform_fn = _hf_batch_transform(
+            to_tensor=to_tensor,
+            flatten=flatten,
+            resize=resize,
+        )
+        # Apply the transform to all splits of all datasets
+        for ds in datasets:
+            for split in ds:
+                ds[split].set_transform(transform_fn)
 
-        # Apply transform to all splits (e.g. train/test)
-        if hasattr(dataset, "keys"):
-            for split in dataset.keys():
-                dataset[split].set_transform(transform_fn)
-        else:
-            # Single-split case
-            dataset.set_transform(transform_fn)
-
-    return dataset
+    return datasets
 
 
 ### DISPLAY UTILITIES FOR TESTING PURPOSES ###
@@ -169,6 +215,10 @@ def get_dataset(
 def print_dataset_info(name: str, ds, split: str = "train"):
     """
     Print basic info about a dataset and one example after preprocessing.
+
+    :param name: Name of the dataset.
+    :param ds: The dataset object.
+    :param split: Which split to use ('train', 'test', etc.).
     """
     print(f"\n========== {name} ==========")
     print(ds)
@@ -202,13 +252,6 @@ def print_dataset_info(name: str, ds, split: str = "train"):
 
 
 def show_random_examples(ds, split: str = "train", n: int = 8, title: str = ""):
-    """
-    Plot a few random examples from a (preprocessed) dataset split.
-
-    Assumes each example has:
-      - 'x': flattened (784,) OR (1, 28, 28)
-      - 'y': label
-    """
     if hasattr(ds, "keys"):
         if split not in ds:
             split = list(ds.keys())[0]
@@ -229,14 +272,20 @@ def show_random_examples(ds, split: str = "train", n: int = 8, title: str = ""):
         y = ex["y"]
 
         if x.ndim == 1:
-            img = x.view(28, 28)
+            side = int(math.isqrt(x.numel()))
+            if side * side != x.numel():
+                raise ValueError(
+                    f"Cannot reshape vector of length {x.numel()} into square image."
+                )
+            img = x.view(side, side)
         elif x.ndim == 3:
-            img = x.squeeze(0)  # (1, 28, 28) -> (28, 28)
+            # (1, H, W) -> (H, W)
+            img = x.squeeze(0)
         else:
             raise ValueError(f"Unexpected x.shape: {x.shape}")
 
         ax.imshow(img.cpu().numpy(), cmap="gray")
-        ax.set_title(str(y))
+        ax.set_title(str(int(y)) if torch.is_tensor(y) else str(y))
         ax.axis("off")
 
     if title:
