@@ -17,6 +17,7 @@ from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 import numpy as np
 
+#TODO: Instead of using cosine distance use bounded uclidian distance
 
 outloop_dataset_names = ['fashion_mnist', 'kmnist']
 innerloop_dataset_names = ['math_shapes']
@@ -52,8 +53,7 @@ else:
 
 
 
-# Hypernetwork internal sizes
-embed_dim = 0           
+# Hypernetwork internal sizes       
 head_hidden = 256        
 use_bias = True
 
@@ -80,18 +80,13 @@ class TargetNet:
         return out
 
 class HyperNetwork(nn.Module):
-    def __init__(self, layer_sizes, embed_dim=32, condition_dim=1000, head_hidden=256, use_bias=True):
+    def __init__(self, layer_sizes, condition_dim=1000, head_hidden=256, use_bias=True):
         super().__init__()
         self.layer_sizes = layer_sizes
         self.num_layers = len(layer_sizes) - 1
-        self.embed_dim = embed_dim
         self.condition_dim = condition_dim
         self.use_bias = use_bias
         
-        self.layer_embeddings = nn.ParameterList([
-            nn.Parameter(torch.randn(embed_dim) * 0.1)
-            for _ in range(self.num_layers)
-        ])
 
         self.heads = nn.ModuleList()
         for i in range(self.num_layers):
@@ -99,7 +94,7 @@ class HyperNetwork(nn.Module):
             out_dim = layer_sizes[i+1]
             n_params = out_dim * in_dim + (out_dim if use_bias else 0)
             head = nn.Sequential(
-                nn.Linear(embed_dim+condition_dim, head_hidden),
+                nn.Linear(condition_dim, head_hidden),
                 nn.ReLU(),
                 nn.Linear(head_hidden, n_params)
             )
@@ -111,11 +106,7 @@ class HyperNetwork(nn.Module):
     def forward(self, conditioning):
         params = []
         for j in range(self.num_layers):
-            if embed_dim > 0:
-                z = self.layer_embeddings[j] 
-                z_cond = torch.cat([z, conditioning], dim=0)
-            else:
-                z_cond = conditioning
+            z_cond = conditioning
 
             head_input = z_cond.unsqueeze(0)  
 
@@ -252,8 +243,6 @@ def create_batches_outerloop():
     all_data_mu = []
     all_data_logvar = []
 
-
-
     for (name, loader) in loaders:
         vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
         file_name = name + vae_description + ".pth"
@@ -265,9 +254,7 @@ def create_batches_outerloop():
         all_data_y.append(data_y)
         all_data_mu.append(data_mu)
         all_data_logvar.append(data_logvar)
-
-
-            
+        
     data_x = torch.cat(all_data_x, 0)
     data_y = torch.cat(all_data_y, 0)
     data_mu = torch.cat(all_data_mu, 0)
@@ -546,7 +533,7 @@ def main():
         train_vaes()
     
     #evaluate_vae_clustering()
-    hyper = HyperNetwork(layer_sizes=target_layer_sizes, embed_dim=embed_dim, condition_dim=condition_dim, head_hidden=head_hidden, use_bias=use_bias).to(device)
+    hyper = HyperNetwork(layer_sizes=target_layer_sizes, condition_dim=condition_dim, head_hidden=head_hidden, use_bias=use_bias).to(device)
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
     hyper.to(device)
     meta_train_hyper(hyper, target)
