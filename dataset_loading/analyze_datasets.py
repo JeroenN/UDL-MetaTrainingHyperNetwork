@@ -30,7 +30,7 @@ def compute_class_distribution(ds, split="train"):
 def save_class_distribution_plot(name, label_counts):
     """
     Save a class distribution bar plot as transparent PNG.
-    
+
     :param name: Dataset name (for output file naming).
     :param label_counts: Counter mapping label -> count.
     """
@@ -105,7 +105,7 @@ def save_one_example_per_class(name, ds, split="train"):
         raw_img = ex["image"]
 
         x = preprocess_image(raw_img, to_tensor=True, flatten=False)  # (1, 28, 28)
-        img = x.squeeze(0).cpu().numpy()  
+        img = x.squeeze(0).cpu().numpy()
 
         r = i // n_cols
         col = i % n_cols
