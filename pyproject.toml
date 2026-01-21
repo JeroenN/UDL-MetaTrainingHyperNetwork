@@ -1,0 +1,16 @@
+[project]
+name = "udl-metatraininghypernetwork"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "datasets>=4.5.0",
+    "ipython>=9.9.0",
+    "numpy>=2.4.1",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.0",
+    "torch>=2.10.0",
+    "torchvision>=0.25.0",
+]
