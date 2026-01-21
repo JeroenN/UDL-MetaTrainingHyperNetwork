@@ -123,9 +123,11 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
 def split_dataset_by_classes(dataset, class_limit):
     max_label = max(dataset["train"]["label"])
     num_classes = max_label + 1
+    n_datasets = num_classes // class_limit 
+
 
     datasets = []
-    for start in range(0, num_classes, class_limit):
+    for start in range(0, n_datasets*class_limit, class_limit):
         end = start + class_limit
         ds = dataset.filter(lambda ex, s=start, e=end: s <= ex["label"] < e)
         datasets.append(ds)

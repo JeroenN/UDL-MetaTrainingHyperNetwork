@@ -224,8 +224,5 @@ vae/checkpoints/
 figures/
 models/
 visualization/
-<<<<<<< HEAD
 run.txt
-=======
 inspect.py
->>>>>>> 89eae6c85c4dbd60d1c362fd8693cb3572c0d6e8

@@ -61,14 +61,13 @@ vae_description = CFG["vae"]["vae_description"]
 cluster_using_guassians = CFG["model"]["cluster_using_guassians"]
 use_contrastive_loss = CFG["model"]["use_contrastive_loss"]
 contrastive_temp = float(CFG["model"]["contrastive_temp"])
-embed_dim = CFG["hypernet"]["embed_dim"]
 head_hidden = CFG["hypernet"]["head_hidden"]
 use_bias = CFG["hypernet"]["use_bias"]
 # Build target_layer_sizes from config + logic
 hidden_layers = CFG["target_net"]["hidden_layers"]
 num_classes = CFG["target_net"]["num_classes"]
 
-condition_dim = vae_head_dim * 2 * n_samples_conditioning
+condition_dim = vae_head_dim * 2
 
 if cluster_using_guassians:
     input_dim = vae_head_dim * 2
@@ -196,8 +195,8 @@ def inner_loop(hyper, target, optimizer, criterion):
         mu = data_mu[batch_idx].to(device)
         logvar = data_logvar[batch_idx].to(device)
         conditioning_vector = torch.concatenate(
-            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), 0
-        ).view(-1)
+            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), 1
+        )
         X = X.view(X.shape[0], -1)
 
         optimizer.zero_grad()
@@ -232,8 +231,8 @@ def outer_loop(hyper, target, optimizer, criterion):
         mu = data_mu[batch_idx].to(device)
         logvar = data_logvar[batch_idx].to(device)
         conditioning_vector = torch.concatenate(
-            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), 0
-        ).view(-1)
+            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), 1
+        )
         X = X.view(X.shape[0], -1)
 
         params = hyper(conditioning_vector)
@@ -356,8 +355,10 @@ def contrastive_loss_new(X, y):
     y = y.unsqueeze(0)
     # torch.eye gives the identity matrix, with ~ we are saying exclude this. So it
     # excludes the pairs where the indices are the same
-    mask_positive = (y == y.T) & (~torch.eye(X.shape[0], dtype=bool, device=device))
-    mask_negative = ~mask_positive
+    eye = torch.eye(X.shape[0], dtype=bool, device=device)
+
+    mask_positive = (y == y.T) & (~eye)
+    mask_negative = (y != y.T) & (~eye)
 
     cos_sim_matrix = cos_sim_matrix / contrastive_temp
 
@@ -367,7 +368,7 @@ def contrastive_loss_new(X, y):
         neg_cos_sim = cos_sim_matrix[i][mask_negative[i]]
         numerator = torch.exp(pos_cos_sim).sum()
         denominator = torch.exp(neg_cos_sim).sum() + numerator
-        loss += torch.log(numerator / denominator)
+        loss -= torch.log(numerator / denominator)
 
     return loss / X.shape[0]
 
@@ -398,8 +399,8 @@ def evaluate_clustering(hyper, target):
         X = X.to(device)
         mu, logvar = get_gaussian_from_vae(vae, X, batch_idx, visualize=False)
         conditioning_vector = torch.concatenate(
-            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning])
-        ).view(-1)
+            (mu[:n_samples_conditioning], logvar[:n_samples_conditioning]), dim=1
+        )
 
         if batch_idx == 0:
             params = hyper(conditioning_vector)
@@ -519,7 +520,6 @@ def main():
     # evaluate_vae_clustering()
     hyper = HyperNetwork(
         layer_sizes=target_layer_sizes,
-        embed_dim=embed_dim,
         condition_dim=condition_dim,
         head_hidden=head_hidden,
         use_bias=use_bias,
