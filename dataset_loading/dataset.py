@@ -123,6 +123,11 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
 def split_dataset_by_classes(dataset, class_limit):
     max_label = max(dataset["train"]["label"])
     num_classes = max_label + 1
+    
+    if num_classes < class_limit:
+        print(f"[WARN] Number of classes in dataset ({num_classes}) is smaller than class_limit ({class_limit}). Returning original dataset.")
+        return [dataset]
+    
     n_datasets = num_classes // class_limit 
 
 

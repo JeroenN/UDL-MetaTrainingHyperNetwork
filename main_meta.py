@@ -71,6 +71,9 @@ use_bias = CFG["hypernet"]["use_bias"]
 hidden_layers = CFG["target_net"]["hidden_layers"]
 output_head = CFG["target_net"]["output_head"]
 
+ablation_mode = CFG["ablation"]["mode"]
+ablation_noise_std = float(CFG.get("ablation", {}).get("noise_std", 1.0))
+
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
 target_layer_sizes = [input_dim, *hidden_layers, output_head]
@@ -177,6 +180,11 @@ class ResourceManager:
             with torch.no_grad():
                 for batch_idx, (X, y) in enumerate(loader):
                     X = X.to(device)
+                    
+                    if ablation_mode == "pixel_noise":
+                        X = torch.randn_like(X) * ablation_noise_std
+                        X = torch.clamp(X, 0.0, 1.0)
+        
                     mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize= False)
                     mus.append(mu)
                     logvars.append(logvar)

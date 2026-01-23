@@ -41,3 +41,8 @@ target_net:
   # Else, input_dim is image_width_height^2 (flattened image)
   hidden_layers: [400, 200]
   output_head: 4
+
+ablation:
+  mode: "none"
+  noise_std: 0.5
+
