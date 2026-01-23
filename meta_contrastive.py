@@ -349,11 +349,6 @@ def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager
     
     return acc_no_training, acc_training
 
-def compute_pairwise_dist(x, eps=1e-8):
-    x_norm = (x ** 2).sum(dim=1, keepdim=True)
-    dist_sq = x_norm + x_norm.T - 2.0 * (x @ x.T)
-    dist_sq = torch.clamp(dist_sq, min=0.0)
-    return torch.sqrt(dist_sq + eps)
 
 def compute_geometry_consistency_loss(mu_batch, target_output, mu_max_dist=None):
     sim_target = torch.mm(target_output, target_output.T)
@@ -366,13 +361,6 @@ def compute_geometry_consistency_loss(mu_batch, target_output, mu_max_dist=None)
     loss = F.mse_loss(dist_target, dist_mu)
     
     return loss
-
-def get_distribution_normalization_factor(vae_distribution_data, sample_size=2048):
-    n = min(len(vae_distribution_data), sample_size)
-    indices = torch.randperm(len(vae_distribution_data))[:n]
-    subset = vae_distribution_data[indices]
-    dists = compute_pairwise_dist(subset)
-    return dists.max()
 
 def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceManager):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
