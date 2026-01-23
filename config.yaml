@@ -3,18 +3,18 @@ training:
   batch_size_innerloop: 16
   batch_size_vae: 256
 
-  epochs_hyper: 1000
+  epochs_hyper: 4000
   epochs_vae: 100
 
   lr_hyper: 1e-4
   lr_vae: 1e-4
-  lr_target: 5e-3
+  lr_target: 1e-2
 
   log_interval: 40
   save_path: "hypernet_checkpoint.pth"
 
 meta:
-  steps_innerloop: 5
+  steps_innerloop: 4
   steps_outerloop: 3
 
 data:
@@ -40,4 +40,4 @@ target_net:
   # If cluster_using_guassians=true, input_dim is 2*vae_head_dim (mu + logvar)
   # Else, input_dim is image_width_height^2 (flattened image)
   hidden_layers: [400, 200]
-  output_head: 10
+  output_head: 4

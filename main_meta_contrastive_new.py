@@ -1,4 +1,3 @@
-# hypernet_mlp.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,33 +5,29 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 import random
 from typing import Dict, List, Optional, Tuple, Union
-from sklearn.cluster import KMeans
-from scipy.optimize import linear_sum_assignment
 import numpy as np
 import yaml
 import re
 from tqdm import tqdm
 from collections import defaultdict
 import matplotlib.pyplot as plt
+from scipy.optimize import linear_sum_assignment
 
 from utils import VAE, TargetNet, HyperNetwork, get_gaussian_from_vae, train_vae
 from dataset_loading import get_dataset, Dataset
 
+from torch.func import functional_call, grad
 
-# Disable nnpack to avoid potential issues on some systems
 try:
     torch.backends.nnpack.enabled = False
 except AttributeError:
     pass
 
-train_dataset_names = ["hebrew_chars", "fashion_mnist", "kmnist",]# "math_shapes"]
+train_dataset_names = ["kmnist", "hebrew_chars", "fashion_mnist"]
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
-device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available() else "cpu"
-)
+device = torch.device("cuda")
 
 num_workers = 2 if device.type == "cuda" else 0
 pin_memory = device.type == "cuda"
@@ -44,7 +39,6 @@ def load_config(path: Union[str, Path]) -> dict:
 
 CFG = load_config(Path(__file__).parent / "config.yaml")
 
-# Pull values out
 batch_size_outerloop = CFG["training"]["batch_size_outerloop"]
 batch_size_innerloop = CFG["training"]["batch_size_innerloop"]
 batch_size_vae = CFG["training"]["batch_size_vae"]
@@ -113,8 +107,7 @@ class ResourceManager:
             loaders_per_dataset = []
             iters_per_dataset = []
             for idx, ds in enumerate(datasets):
-                # Use 'test' split for the test set, 'train' for others
-                split = "train" #"test" if name == test_name and name not in inner_names + outer_names else "train"
+                split = "train"
                 dataset = Dataset(ds[split])
     
                 loader = DataLoader(
@@ -125,7 +118,7 @@ class ResourceManager:
                     pin_memory=pin_memory
                 )
                 loaders_per_dataset.append(loader)
-                iters_per_dataset.append(iter(loader)) # Create infinite iterator
+                iters_per_dataset.append(iter(loader))
                 self.loaders[name] = loaders_per_dataset
                 self.iters[name] = iters_per_dataset
 
@@ -148,7 +141,6 @@ class ResourceManager:
 
         vae = self.get_vae(dataset_name)
         
-        # No grad for VAE part
         with torch.no_grad():
             mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
         
@@ -189,158 +181,10 @@ class ResourceManager:
             
         self.vae_distributions[dataset_name] = distribution_per_dataset
 
-def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, centroids, distributions_targets):
-    hyper.eval()
-    
-    vae_distribution = resources.get_vae_data_distribution(test_dataset_name, 0)
-    params_old = hyper(vae_distribution)
-
-
-    all_assignments = []
-    all_y = []
-    with torch.no_grad():
-        for batch_idx, (distribution, y) in enumerate(distributions_targets):
-            logits = target.forward(distribution, params_old)
-            logits = F.normalize(logits, p=2, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.01, dim=1)
-            all_assignments.append(assignments.cpu())
-            all_y.append(y.cpu())
-
-            if batch_idx == 20:
-                break
-
-    all_assignments = torch.concat(all_assignments, dim = 0)
-    all_y = torch.concat(all_y, dim =0)
-    acc_no_training = supervised_hungarian_accuracy(all_assignments, all_y)
-    params_target = params_old
-    for batch_idx, (distribution, y) in enumerate(distributions_targets):
-        logits = target.forward(distribution, params_target)
-        logits = F.normalize(logits, p=2, dim=1)
-        inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
-
-        flat_params = flatten_params(params_target)
-        grads = torch.autograd.grad(inner_loss, flat_params)
-        flat_params = [p - lr_target * g for p, g in zip(flat_params, grads)]
-
-        params_target = unflatten_params(flat_params, params_target)
-
-    all_assignments = []
-    with torch.no_grad():
-        for batch_idx, (distribution, y) in enumerate(distributions_targets):
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.01, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
-            all_assignments.append(assignments.cpu())
-
-
-    all_assignments = torch.concat(all_assignments, dim = 0)
-    acc_training = supervised_hungarian_accuracy(all_assignments, all_y)
-    return acc_no_training, acc_training
-
-
 def pairwise_squared_distances(x, y):
     x_norm = (x ** 2).sum(dim=1, keepdim=True)
     y_norm = (y ** 2).sum(dim=1).unsqueeze(0)
     return x_norm + y_norm - 2.0 * x @ y.T
-
-
-def compute_soft_dist(embeddings, centroids, temperature=1.0):
-    dists = pairwise_squared_distances(embeddings, centroids)#torch.cdist(embeddings, centroids, p=2)**2
-    assignments = F.softmax(-dists / temperature, dim=1)
-
-    return assignments
-    
-
-def compute_soft_centroids(embeddings, K = num_classes, iterations=1, temperature=1.0):
-    indices = torch.randperm(embeddings.size(0))[:K]
-    initial_centroids = embeddings[indices].detach()
-    centroids = initial_centroids
-    
-    for _ in range(iterations):
-        dists = pairwise_squared_distances(embeddings, centroids)#torch.cdist(embeddings, centroids, p=2)**2
-        
-        assignments = F.softmax(-dists / temperature, dim=1) 
-        
-        weight_sums = assignments.sum(dim=0, keepdim=True).T 
-        
-        weighted_embeddings_sum = torch.matmul(assignments.T, embeddings)
-        
-        centroids = weighted_embeddings_sum / (weight_sums + 1e-8)
-        
-    return centroids, assignments
-
-def soft_clustering_loss(embeddings, centroids, temperature=0.5, alpha=1.0):
-    sim = torch.matmul(embeddings, centroids.T)
-    
-    assignments = F.softmax(sim / temperature, dim=1) # (N, K)
-    
-    weighted_sim = torch.sum(assignments * sim, dim=1)
-    clustering_loss = torch.mean(1.0 - weighted_sim)
-    
-    p_bar = assignments.mean(dim=0) # (K,)
-    entropy_reg = -torch.sum(p_bar * torch.log(p_bar + 1e-8))
-    
-    total_loss = clustering_loss - (alpha * entropy_reg)
-    
-    return total_loss
-
-
-def supervised_hungarian_accuracy(soft_assignments: torch.Tensor, true_labels: torch.Tensor) -> float:
-    device = soft_assignments.device
-    n_samples, n_clusters = soft_assignments.shape
-
-    cost_matrix = torch.zeros((n_clusters, n_clusters), device=device)
-    probs = soft_assignments.detach()
-    
-    for i in range(n_clusters):
-        cluster_mask = probs[:, i]
-        for j in range(n_clusters):
-            label_mask = (true_labels == j).float()
-            cost_matrix[i, j] = torch.sum(cluster_mask * label_mask)
-    
-    row_ind, col_ind = linear_sum_assignment(-cost_matrix.cpu().numpy())
-    mapping = torch.zeros(n_clusters, dtype=torch.long, device=device)
-    for cluster_idx, label_idx in zip(row_ind, col_ind):
-        mapping[cluster_idx] = label_idx
-
-    predicted_clusters = torch.argmax(soft_assignments, dim=1)
-    mapped_preds = mapping[predicted_clusters]
-
-    correct = (mapped_preds == true_labels).sum().item()
-    accuracy = correct / n_samples
-    return accuracy
-
-
-def supervised_hungarian_loss(soft_assignments, true_labels):
-    device = soft_assignments.device
-    n_samples, n_clusters = soft_assignments.shape
-    
-    cost_matrix = torch.zeros((n_clusters, n_clusters), device=device)
-
-    probs = soft_assignments.detach() 
-    
-    for i in range(n_clusters):
-        cluster_mask = probs[:, i] 
-        for j in range(n_clusters):
-            label_mask = (true_labels == j).float()
-            cost_matrix[i, j] = torch.sum(cluster_mask * label_mask)
-
-    row_ind, col_ind = linear_sum_assignment(-cost_matrix.cpu().numpy())
-    
-    mapping = torch.zeros(n_clusters, dtype=torch.long, device=device)
-    for cluster_idx, label_idx in zip(row_ind, col_ind):
-        mapping[cluster_idx] = label_idx
-
-    idx = torch.argsort(mapping)
-    reordered_assignments = soft_assignments[:, idx]
-
-    loss = F.nll_loss(torch.log(reordered_assignments + 1e-8), true_labels)
-    
-    return loss
 
 def flatten_params(params):
     flat = []
@@ -363,12 +207,6 @@ def unflatten_params(flat_params, template_params):
             b_new = None
         new_params.append((W_new, b_new))
     return new_params
-
-def get_fixed_centroids(num_classes, dim, device):
-    C = torch.eye(num_classes, dim)
-    C = F.normalize(C, p=2, dim=1)
-    return C.to(device)
-
 
 def plot_losses_and_accuracies(inner_losses_dict,
                                outer_losses_dict,
@@ -393,6 +231,7 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.legend()
     plt.grid(True)
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "loss.png")
+    plt.close()
 
 
     plt.figure()
@@ -401,15 +240,142 @@ def plot_losses_and_accuracies(inner_losses_dict,
 
     plt.xlabel("Iteration")
     plt.ylabel("Accuracy")
-    plt.title("Accuracies")
+    plt.title("Accuracies (Cluster Aligned)")
     plt.legend()
     plt.grid(True)
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
+    plt.close()
+
+# Basically clustering algorithm, find the neurons that correspond to the classes
+def get_optimal_neuron_permutation(logits, targets, num_classes):
+    probs = F.softmax(logits, dim=1)
+    preds = torch.argmax(probs, dim=1).detach().cpu().numpy()
+    targets_np = targets.detach().cpu().numpy()
+    
+    confusion = np.zeros((num_classes, num_classes))
+    for p, t in zip(preds, targets_np):
+        confusion[p, t] += 1
+        
+    row_ind, col_ind = linear_sum_assignment(-confusion)
+    
+    class_to_neuron = {c: r for r, c in zip(row_ind, col_ind)}
+    
+    used_neurons = set(class_to_neuron.values())
+    all_neurons = set(range(num_classes))
+    remaining_neurons = list(all_neurons - used_neurons)
+    
+    perm_indices = []
+    for c in range(num_classes):
+        if c in class_to_neuron:
+            perm_indices.append(class_to_neuron[c])
+        else:
+            perm_indices.append(remaining_neurons.pop())
+            
+    return torch.tensor(perm_indices, device=logits.device)
+
+def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager, distributions_targets, mu_max_dist):
+    
+    vae_distribution = resources.get_vae_data_distribution(test_dataset_name, 0)
+    dist_inner_pool = vae_distribution
+    dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
+    
+    params_base = hyper(dist_inner)
+
+    correct_base = 0
+    total_base = 0
+    
+    with torch.no_grad():
+        for mu, logvar, y in distributions_targets:
+            y = y.to(device)
+            distribution = torch.concat((mu, logvar), dim=1)
+            logits = target.forward(distribution, params_base)
+            
+            perm = get_optimal_neuron_permutation(logits, y, num_classes)
+            aligned_logits = logits[:, perm]
+            
+            preds = torch.argmax(aligned_logits, dim=1)
+            correct_base += (preds == y).sum().item()
+            total_base += y.size(0)
+            
+    acc_no_training = correct_base / total_base if total_base > 0 else 0.0
+
+    buffers_hyper = dict(hyper.named_buffers())
+    
+    correct_adapted = 0
+    total_adapted = 0
+
+    for mu, logvar, y in distributions_targets:
+        
+        current_params_hyper = {
+            k: v.clone().detach().requires_grad_(True) 
+            for k, v in hyper.named_parameters()
+        }
+        
+        for _ in range(steps_innerloop):
+            
+            dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
+            
+            params_target = functional_call(hyper, (current_params_hyper, buffers_hyper), (dist_inner,))
+            
+            distribution = torch.concat((mu, logvar), dim=1)
+            logits = target.forward(distribution, params_target)
+            target_output = F.normalize(logits, p=2, dim=1)
+
+            loss = compute_geometry_consistency_loss(mu, target_output) 
+
+            grads = torch.autograd.grad(loss, current_params_hyper.values(), create_graph=False)
+            
+            current_params_hyper = {
+                name: (p - g * lr_target).detach().requires_grad_(True)
+                for (name, p), g in zip(current_params_hyper.items(), grads)
+            }
+
+        with torch.no_grad():
+            y = y.to(device)
+            dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
+            params_target_adapted = functional_call(hyper, (current_params_hyper, buffers_hyper), (dist_inner,))
+            
+            distribution = torch.concat((mu, logvar), dim=1)
+            logits = target.forward(distribution, params_target_adapted)
+            
+            perm = get_optimal_neuron_permutation(logits, y, num_classes)
+            aligned_logits = logits[:, perm]
+
+            preds = torch.argmax(aligned_logits, dim=1)
+            correct_adapted += (preds == y).sum().item()
+            total_adapted += y.size(0)
+
+    acc_training = correct_adapted / total_adapted if total_adapted > 0 else 0.0
+    
+    return acc_no_training, acc_training
+
+def compute_pairwise_dist(x, eps=1e-8):
+    x_norm = (x ** 2).sum(dim=1, keepdim=True)
+    dist_sq = x_norm + x_norm.T - 2.0 * (x @ x.T)
+    dist_sq = torch.clamp(dist_sq, min=0.0)
+    return torch.sqrt(dist_sq + eps)
+
+def compute_geometry_consistency_loss(mu_batch, target_output, mu_max_dist=None):
+    sim_target = torch.mm(target_output, target_output.T)
+    dist_target = 1.0 - sim_target 
+
+    mu_norm = F.normalize(mu_batch, p=2, dim=1)
+    sim_mu = torch.mm(mu_norm, mu_norm.T)
+    dist_mu = 1.0 - sim_mu
+
+    loss = F.mse_loss(dist_target, dist_mu)
+    
+    return loss
+
+def get_distribution_normalization_factor(vae_distribution_data, sample_size=2048):
+    n = min(len(vae_distribution_data), sample_size)
+    indices = torch.randperm(len(vae_distribution_data))[:n]
+    subset = vae_distribution_data[indices]
+    dists = compute_pairwise_dist(subset)
+    return dists.max()
 
 def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceManager):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
-    
-    centroids = get_fixed_centroids(num_classes, output_head, device)
     
     distributions_targets = []
     loader = resources.get_loader(test_dataset_name, 0)
@@ -418,61 +384,72 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
         for batch_idx, (X, y) in enumerate(loader):
             X = X.to(device)
             mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
-            distribution = torch.concat((mu, logvar), dim=1)
-            distributions_targets.append((distribution, y)) 
+            distributions_targets.append((mu, logvar, y)) 
 
-            if batch_idx == 20:
+            if batch_idx == steps_innerloop:
                 break
     
     inner_losses = defaultdict(list)
     outer_losses = defaultdict(list)
     acc_training_list = []
     acc_no_training_list = []
+    mu_max_dist = None
+
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
+        params_hyper = dict(hyper.named_parameters())
+        buffers_hyper = dict(hyper.named_buffers())
 
         dataset_name = random.choice(train_dataset_names)
         idx = np.random.randint(0, len(resources.get_loader(dataset_name)))
-        vae_distribution = resources.get_vae_data_distribution(dataset_name, idx)
-        params_target = hyper(vae_distribution)
+        vae_dist_inner = resources.get_vae_data_distribution(dataset_name, idx)
         
-        #Innerloop
+        adapted_params_hyper = {k: v.clone() for k, v in params_hyper.items()}
+        # Innerloop
         for _ in range(steps_innerloop):
-            X, y, mu, logvar = resources.get_batch("mnist", 0)#resources.get_batch(dataset_name, idx)
+            inner_X, _, inner_mu, inner_logvar = resources.get_batch(dataset_name, idx)
+            dist_inner = vae_dist_inner[torch.randperm(vae_dist_inner.size(0))[:1024]]
+            inner_distribution_input = torch.concat((inner_mu, inner_logvar), dim=1)
+            
+            params_target_inner = functional_call(hyper, (adapted_params_hyper, buffers_hyper), (dist_inner,))
+            
+            target_logits = target.forward(inner_distribution_input, params_target_inner)
+            
+            target_output = F.normalize(target_logits, p=2, dim=1)
+            
+            inner_loss = compute_geometry_consistency_loss(inner_mu, target_output, mu_max_dist)
+            
+            grads = torch.autograd.grad(
+                inner_loss,
+                adapted_params_hyper.values(),
+                create_graph=True,
+                allow_unused=False
+            )
 
-            distribution = torch.concat((mu, logvar), dim=1)
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
+            adapted_params_hyper = {
+                name: p - g * lr_target
+                for (name, p), g in zip(adapted_params_hyper.items(), grads)
+            }
 
-            inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
+        # Outerloop
+        dist_outer = vae_dist_inner[torch.randperm(vae_dist_inner.size(0))[:1024]]
+        X_outer, y_outer, mu_outer, logvar_outer = resources.get_batch(dataset_name, idx)
+        outer_distribution_input = torch.concat((mu_outer, logvar_outer), dim=1)
+        
+        params_target_outer = functional_call(hyper, (adapted_params_hyper, buffers_hyper), (dist_outer,))
+        
+        logits_outer = target.forward(outer_distribution_input, params_target_outer)
+        
+        perm = get_optimal_neuron_permutation(logits_outer, y_outer, num_classes)
+        
+        aligned_logits_outer = logits_outer[:, perm]
+        
+        outer_loss = F.cross_entropy(aligned_logits_outer, y_outer)
 
-            flat_params = flatten_params(params_target)
-            grads = torch.autograd.grad(inner_loss, flat_params, create_graph=True)
-            flat_params = [p - lr_target * g for p, g in zip(flat_params, grads)]
-
-            params_target = unflatten_params(flat_params, params_target)
-
-
-        outer_loss = 0.0
-        #Outerloop
-        for _ in range(steps_outerloop):
-            X, y, mu, logvar = resources.get_batch(dataset_name, idx)
-            distribution = torch.concat((mu, logvar), dim=1)
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
-            #centroids, assignments = compute_soft_centroids(logits, K = num_classes, iterations=3, temperature=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=0.5)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.1, dim=1)
-            loss = supervised_hungarian_loss(assignments, y)
-
-            outer_loss +=loss
-
-        outer_loss = outer_loss / steps_outerloop
         optimizer.zero_grad()
-        outer_loss.backward()
+        outer_loss.backward() 
         optimizer.step()
 
-        acc_no_training, acc_training = evaluate_clustering(hyper, target, resources, centroids, distributions_targets)
+        acc_no_training, acc_training = evaluate_classification(hyper, target, resources, distributions_targets, mu_max_dist)
         inner_losses[dataset_name].append(inner_loss.detach().item())
         outer_losses[dataset_name].append(outer_loss.detach().item())
         acc_no_training_list.append(acc_no_training)
@@ -486,14 +463,13 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
             plot_losses_and_accuracies(inner_losses, outer_losses, acc_no_training_list, acc_training_list)    
-        
+
 
 def train_vaes(dataset_name):
     print(f"Training VAE for {dataset_name}...")
     datasets = get_dataset(name=dataset_name, preprocess=True, to_tensor=True, flatten=False)
     data = datasets[0]
     train_loader = DataLoader(Dataset(data["train"]), batch_size=batch_size_vae, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    #test_loader = DataLoader(Dataset(data["test"]), batch_size=batch_size_vae, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
     
     vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(device)
     train_vae(vae, train_loader, train_loader, dataset_name, lr_vae, epochs_vae, log_interval, vae_description, models_folder)

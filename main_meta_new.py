@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 from utils import VAE, TargetNet, HyperNetwork, get_gaussian_from_vae, train_vae
 from dataset_loading import get_dataset, Dataset
 
+import torch.nn.functional as F
+from torch.func import functional_call, grad
+
 
 # Disable nnpack to avoid potential issues on some systems
 try:
@@ -25,7 +28,7 @@ try:
 except AttributeError:
     pass
 
-train_dataset_names = ["hebrew_chars", "fashion_mnist", "kmnist",]# "math_shapes"]
+train_dataset_names = ["kmnist", "hebrew_chars", "fashion_mnist"]#, "kmnist",]# "math_shapes"]
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
@@ -188,58 +191,6 @@ class ResourceManager:
             distribution_per_dataset.append(distribution)
             
         self.vae_distributions[dataset_name] = distribution_per_dataset
-
-def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, centroids, distributions_targets):
-    hyper.eval()
-    
-    vae_distribution = resources.get_vae_data_distribution(test_dataset_name, 0)
-    params_old = hyper(vae_distribution)
-
-
-    all_assignments = []
-    all_y = []
-    with torch.no_grad():
-        for batch_idx, (distribution, y) in enumerate(distributions_targets):
-            logits = target.forward(distribution, params_old)
-            logits = F.normalize(logits, p=2, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.01, dim=1)
-            all_assignments.append(assignments.cpu())
-            all_y.append(y.cpu())
-
-            if batch_idx == 20:
-                break
-
-    all_assignments = torch.concat(all_assignments, dim = 0)
-    all_y = torch.concat(all_y, dim =0)
-    acc_no_training = supervised_hungarian_accuracy(all_assignments, all_y)
-    params_target = params_old
-    for batch_idx, (distribution, y) in enumerate(distributions_targets):
-        logits = target.forward(distribution, params_target)
-        logits = F.normalize(logits, p=2, dim=1)
-        inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
-
-        flat_params = flatten_params(params_target)
-        grads = torch.autograd.grad(inner_loss, flat_params)
-        flat_params = [p - lr_target * g for p, g in zip(flat_params, grads)]
-
-        params_target = unflatten_params(flat_params, params_target)
-
-    all_assignments = []
-    with torch.no_grad():
-        for batch_idx, (distribution, y) in enumerate(distributions_targets):
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.01, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
-            all_assignments.append(assignments.cpu())
-
-
-    all_assignments = torch.concat(all_assignments, dim = 0)
-    acc_training = supervised_hungarian_accuracy(all_assignments, all_y)
-    return acc_no_training, acc_training
 
 
 def pairwise_squared_distances(x, y):
@@ -406,6 +357,85 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.grid(True)
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
 
+def compute_inner_loss(hyper, target, buffers_hyper, vae_dist, centroids, current_params_hyper, data_input):
+    params_target = functional_call(hyper, (current_params_hyper, buffers_hyper), (vae_dist,))
+    
+    X, y, mu, logvar = data_input
+    distribution = torch.concat((mu, logvar), dim=1)
+    
+    logits = target.forward(distribution, params_target)
+    logits = F.normalize(logits, p=2, dim=1)
+    
+    return soft_clustering_loss(logits, centroids, temperature=0.1, alpha=0.01)
+
+
+
+def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, centroids, distributions_targets):
+    
+    vae_distribution = resources.get_vae_data_distribution(test_dataset_name, 0)
+    params_old = hyper(vae_distribution)
+
+
+    all_assignments = []
+    all_y = []
+    with torch.no_grad():
+        for batch_idx, (distribution, y) in enumerate(distributions_targets):
+            logits = target.forward(distribution, params_old)
+            logits = F.normalize(logits, p=2, dim=1)
+            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
+            sim = torch.matmul(logits, centroids.T)
+            assignments = F.softmax(sim / 0.01, dim=1)
+            all_assignments.append(assignments.cpu())
+            all_y.append(y.cpu())
+
+            if batch_idx == steps_innerloop:
+                break
+    
+    all_assignments = torch.concat(all_assignments, dim = 0)
+    all_y = torch.concat(all_y, dim =0)
+    acc_no_training = supervised_hungarian_accuracy(all_assignments, all_y)
+    current_params_hyper = {
+        k: v.clone().detach().requires_grad_(True) 
+        for k, v in hyper.named_parameters()
+    }
+    buffers_hyper = dict(hyper.named_buffers())
+
+    dist_inner = vae_distribution[torch.randperm(vae_distribution.size(0))[:1024]]
+    for batch_idx, (distribution, y) in enumerate(distributions_targets):
+        params_target = functional_call(hyper, (current_params_hyper, buffers_hyper), (dist_inner,))
+
+        logits = target.forward(distribution, params_target)
+        logits = F.normalize(logits, p=2, dim=1)
+
+        loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
+
+        grads = torch.autograd.grad(
+            loss,
+            current_params_hyper.values(),
+            create_graph=False 
+        )
+
+        current_params_hyper = {
+            name: (p - g * lr_hyper).detach().requires_grad_(True)
+            for (name, p), g in zip(current_params_hyper.items(), grads)
+        }
+    
+
+    all_assignments = []
+    with torch.no_grad():
+        for batch_idx, (distribution, y) in enumerate(distributions_targets):
+            logits = target.forward(distribution, params_target)
+            logits = F.normalize(logits, p=2, dim=1)
+            sim = torch.matmul(logits, centroids.T)
+            assignments = F.softmax(sim / 0.01, dim=1)
+            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
+            all_assignments.append(assignments.cpu())
+
+
+    all_assignments = torch.concat(all_assignments, dim = 0)
+    acc_training = supervised_hungarian_accuracy(all_assignments, all_y)
+    return acc_no_training, acc_training
+
 def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceManager):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
     
@@ -421,55 +451,61 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             distribution = torch.concat((mu, logvar), dim=1)
             distributions_targets.append((distribution, y)) 
 
-            if batch_idx == 20:
+            if batch_idx == steps_innerloop:
                 break
     
     inner_losses = defaultdict(list)
     outer_losses = defaultdict(list)
     acc_training_list = []
     acc_no_training_list = []
+
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
+        params_hyper = dict(hyper.named_parameters())
+        buffers_hyper = dict(hyper.named_buffers())
 
         dataset_name = random.choice(train_dataset_names)
         idx = np.random.randint(0, len(resources.get_loader(dataset_name)))
-        vae_distribution = resources.get_vae_data_distribution(dataset_name, idx)
-        params_target = hyper(vae_distribution)
+
+        vae_dist_outer = resources.get_vae_data_distribution(dataset_name, idx)
+        vae_dist_inner = resources.get_vae_data_distribution(dataset_name, idx)
+
         
-        #Innerloop
+        adapted_params_hyper = {k: v.clone() for k, v in params_hyper.items()}
+        
+        
         for _ in range(steps_innerloop):
-            X, y, mu, logvar = resources.get_batch("mnist", 0)#resources.get_batch(dataset_name, idx)
+            inner_batch = resources.get_batch(dataset_name, idx)
+            dist_inner = vae_dist_inner[torch.randperm(vae_dist_inner.size(0))[:1024]]
+            inner_loss = compute_inner_loss(hyper, target, buffers_hyper, dist_inner, centroids, adapted_params_hyper, inner_batch)
+            grads = torch.autograd.grad(
+                inner_loss,
+                adapted_params_hyper.values(),
+                create_graph=True 
+            )
 
-            distribution = torch.concat((mu, logvar), dim=1)
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
+            adapted_params_hyper = {
+                name: p - g * lr_target
+                for (name, p), g in zip(adapted_params_hyper.items(), grads)
+            }
 
-            inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
+        #Outer Loop
+        dist_outer = vae_dist_outer[torch.randperm(vae_dist_outer.size(0))[:1024]]
+        params_target_outer = functional_call(hyper, (adapted_params_hyper, buffers_hyper), (dist_outer,))
+        
+        X, y, mu, logvar = resources.get_batch(dataset_name, idx)
+        distribution = torch.concat((mu, logvar), dim=1)
+        
+        logits = target.forward(distribution, params_target_outer)
+        logits = F.normalize(logits, p=2, dim=1)
+        
+        sim = torch.matmul(logits, centroids.T)
+        assignments = F.softmax(sim / 0.1, dim=1)
+        
+        # This loss has a path back to 'params_hyper' through 'adapted_params_hyper'
+        outer_loss = supervised_hungarian_loss(assignments, y)
 
-            flat_params = flatten_params(params_target)
-            grads = torch.autograd.grad(inner_loss, flat_params, create_graph=True)
-            flat_params = [p - lr_target * g for p, g in zip(flat_params, grads)]
-
-            params_target = unflatten_params(flat_params, params_target)
-
-
-        outer_loss = 0.0
-        #Outerloop
-        for _ in range(steps_outerloop):
-            X, y, mu, logvar = resources.get_batch(dataset_name, idx)
-            distribution = torch.concat((mu, logvar), dim=1)
-            logits = target.forward(distribution, params_target)
-            logits = F.normalize(logits, p=2, dim=1)
-            #centroids, assignments = compute_soft_centroids(logits, K = num_classes, iterations=3, temperature=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=0.5)
-            sim = torch.matmul(logits, centroids.T)
-            assignments = F.softmax(sim / 0.1, dim=1)
-            loss = supervised_hungarian_loss(assignments, y)
-
-            outer_loss +=loss
-
-        outer_loss = outer_loss / steps_outerloop
         optimizer.zero_grad()
-        outer_loss.backward()
+        outer_loss.backward() # Backprops through the inner loop steps
         optimizer.step()
 
         acc_no_training, acc_training = evaluate_clustering(hyper, target, resources, centroids, distributions_targets)
@@ -486,7 +522,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
             plot_losses_and_accuracies(inner_losses, outer_losses, acc_no_training_list, acc_training_list)    
-        
+
 
 def train_vaes(dataset_name):
     print(f"Training VAE for {dataset_name}...")
