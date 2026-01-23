@@ -44,9 +44,10 @@ batch_size_innerloop = CFG["training"]["batch_size_innerloop"]
 batch_size_vae = CFG["training"]["batch_size_vae"]
 epochs_hyper = CFG["training"]["epochs_hyper"]
 epochs_vae = CFG["training"]["epochs_vae"]
-lr_hyper = float(CFG["training"]["lr_hyper"])
+lr_outer = float(CFG["training"]["lr_outer"])
 lr_vae = float(CFG["training"]["lr_vae"])
-lr_target = float(CFG["training"]["lr_target"])
+lr_inner = float(CFG["training"]["lr_inner"])
+weight_inner_loss = CFG["training"]["weight_innerloss"]
 log_interval = CFG["training"]["log_interval"]
 save_path = CFG["training"]["save_path"]
 steps_innerloop = CFG["meta"]["steps_innerloop"]
@@ -64,6 +65,7 @@ head_hidden = CFG["hypernet"]["head_hidden"]
 use_bias = CFG["hypernet"]["use_bias"]
 hidden_layers = CFG["target_net"]["hidden_layers"]
 output_head = CFG["target_net"]["output_head"]
+
 
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
@@ -235,8 +237,8 @@ def plot_losses_and_accuracies(inner_losses_dict,
 
 
     plt.figure()
-    plt.plot(acc_no_training_list, label="Accuracy (no training)")
-    plt.plot(acc_training_list, label="Accuracy (with training)")
+    acc_diff = [a_train - a_no_train for a_train, a_no_train in zip(acc_training_list, acc_no_training_list)]
+    plt.plot(acc_diff, label="Accuracy difference train vs no_train")
 
     plt.xlabel("Iteration")
     plt.ylabel("Accuracy")
@@ -322,11 +324,12 @@ def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager
             target_output = F.normalize(logits, p=2, dim=1)
 
             loss = compute_geometry_consistency_loss(mu, target_output) 
+            loss = loss * weight_inner_loss
 
             grads = torch.autograd.grad(loss, current_params_hyper.values(), create_graph=False)
             
             current_params_hyper = {
-                name: (p - g * lr_target).detach().requires_grad_(True)
+                name: (p - g * lr_inner).detach().requires_grad_(True)
                 for (name, p), g in zip(current_params_hyper.items(), grads)
             }
 
@@ -363,7 +366,7 @@ def compute_geometry_consistency_loss(mu_batch, target_output, mu_max_dist=None)
     return loss
 
 def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceManager):
-    optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
+    optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_outer)
     
     distributions_targets = []
     loader = resources.get_loader(test_dataset_name, 0)
@@ -405,7 +408,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             target_output = F.normalize(target_logits, p=2, dim=1)
             
             inner_loss = compute_geometry_consistency_loss(inner_mu, target_output, mu_max_dist)
-            
+            inner_loss = inner_loss * weight_inner_loss
             grads = torch.autograd.grad(
                 inner_loss,
                 adapted_params_hyper.values(),
@@ -414,7 +417,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             )
 
             adapted_params_hyper = {
-                name: p - g * lr_target
+                name: p - g * lr_inner
                 for (name, p), g in zip(adapted_params_hyper.items(), grads)
             }
 
