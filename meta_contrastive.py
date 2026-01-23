@@ -212,8 +212,7 @@ def unflatten_params(flat_params, template_params):
 
 def plot_losses_and_accuracies(inner_losses_dict,
                                outer_losses_dict,
-                               acc_no_training_list,
-                               acc_training_list):
+                               average_acc_diff):
     Path(Path(__file__).parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
     plt.figure()
     for dataset_name in inner_losses_dict:
@@ -235,18 +234,17 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "loss.png")
     plt.close()
 
+    if len(average_acc_diff) > 0:
+        plt.figure()
+        plt.plot(average_acc_diff, label="Accuracy difference train vs no_train")
 
-    plt.figure()
-    acc_diff = [a_train - a_no_train for a_train, a_no_train in zip(acc_training_list, acc_no_training_list)]
-    plt.plot(acc_diff, label="Accuracy difference train vs no_train")
-
-    plt.xlabel("Iteration")
-    plt.ylabel("Accuracy")
-    plt.title("Accuracies (Cluster Aligned)")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
-    plt.close()
+        plt.xlabel("Iteration")
+        plt.ylabel("Accuracy")
+        plt.title("Accuracies averaged")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
+        plt.close()
 
 # Basically clustering algorithm, find the neurons that correspond to the classes
 def get_optimal_neuron_permutation(logits, targets, num_classes):
@@ -384,6 +382,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
     outer_losses = defaultdict(list)
     acc_training_list = []
     acc_no_training_list = []
+    average_acc_diff = []
     mu_max_dist = None
 
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
@@ -445,6 +444,9 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
         outer_losses[dataset_name].append(outer_loss.detach().item())
         acc_no_training_list.append(acc_no_training)
         acc_training_list.append(acc_training)
+        if epoch > 50:
+            acc_diff = [a_train - a_no_train for a_train, a_no_train in zip(acc_training_list, acc_no_training_list)]
+            average_acc_diff.append(sum(acc_diff[-50:])/50)
         if epoch % log_interval == 0:
             print(f"accuracy no training {acc_no_training:.4f}")
             print(f"accuracy training {acc_training: .4f}")
@@ -453,7 +455,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
                 print(f"average acc no training last 100 {sum(acc_no_training_list[-100:])/100:.4f}")
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
-            plot_losses_and_accuracies(inner_losses, outer_losses, acc_no_training_list, acc_training_list)    
+            plot_losses_and_accuracies(inner_losses, outer_losses, average_acc_diff)    
 
 
 def train_vaes(dataset_name):

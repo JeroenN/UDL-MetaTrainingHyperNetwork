@@ -6,11 +6,11 @@ training:
   epochs_hyper: 4000
   epochs_vae: 100
 
-  lr_outer: 1e-4
+  lr_outer: 1e-5
   lr_vae: 1e-4
   lr_inner: 5e-3
 
-  weight_innerloss: 2
+  weight_innerloss: 3
 
   log_interval: 40
   save_path: "hypernet_checkpoint.pth"
