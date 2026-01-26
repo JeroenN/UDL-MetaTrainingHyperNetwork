@@ -391,7 +391,8 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
     acc_no_training_list = []
     average_acc_diff = []
     mu_max_dist = None
-    log_embedding_epochs = {0, epochs_hyper // 2, epochs_hyper - 1}
+    log_every = 10
+    log_embedding_epochs = set(range(0, epochs_hyper, log_every))
     target_embeddings_over_time = {}
 
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
