@@ -1,6 +1,6 @@
 training:
   batch_size_outerloop: 16
-  batch_size_innerloop: 16
+  batch_size_innerloop: 32
   batch_size_vae: 512
 
   #epochs_hyper: 4000
