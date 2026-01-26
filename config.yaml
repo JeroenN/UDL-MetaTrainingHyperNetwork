@@ -1,12 +1,12 @@
 training:
   batch_size_outerloop: 16
   batch_size_innerloop: 16
-  batch_size_vae: 256
+  batch_size_vae: 512
 
   #epochs_hyper: 4000
   #epochs_vae: 100
-  epochs_hyper: 5
-  epochs_vae: 5
+  epochs_hyper: 4000
+  epochs_vae: 10
 
   lr_outer: 1e-5
   lr_vae: 1e-4

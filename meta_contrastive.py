@@ -23,7 +23,7 @@ try:
 except AttributeError:
     pass
 
-train_dataset_names = ["kmnist", "hebrew_chars", "fashion_mnist"]
+train_dataset_names = ["kmnist", "hebrew_chars", "fashion_mnist", "math_shapes"]
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
@@ -31,6 +31,11 @@ device = torch.device("cuda")
 
 num_workers = 2 if device.type == "cuda" else 0
 pin_memory = device.type == "cuda"
+import torch
+print("CUDA_VISIBLE_DEVICES:", __import__("os").environ.get("CUDA_VISIBLE_DEVICES"))
+print("device:", torch.cuda.get_device_name(0))
+print("total mem (GiB):", torch.cuda.get_device_properties(0).total_memory / 1024**3)
+print("free/total:", [x/1024**3 for x in torch.cuda.mem_get_info()])
 
 def load_config(path: Union[str, Path]) -> dict:
     path = Path(path)
@@ -377,13 +382,17 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
 
             if batch_idx == steps_innerloop:
                 break
-    
+    ref_mu = torch.cat([mu for mu, _, _ in distributions_targets], dim=0).to(device)
+    ref_logvar = torch.cat([logvar for _, logvar, _ in distributions_targets], dim=0).to(device)
+    ref_labels = torch.cat([y for _, _, y in distributions_targets], dim=0).cpu()
     inner_losses = defaultdict(list)
     outer_losses = defaultdict(list)
     acc_training_list = []
     acc_no_training_list = []
     average_acc_diff = []
     mu_max_dist = None
+    log_embedding_epochs = {0, epochs_hyper // 2, epochs_hyper - 1}
+    target_embeddings_over_time = {}
 
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
         params_hyper = dict(hyper.named_parameters())
@@ -438,6 +447,33 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
         optimizer.zero_grad()
         outer_loss.backward() 
         optimizer.step()
+
+        if epoch in log_embedding_epochs:
+                vae_dist_inner = resources.get_vae_data_distribution(dataset_name, idx)
+                dist_inner = vae_dist_inner[
+                    torch.randperm(vae_dist_inner.size(0))[:1024]
+                ]
+
+                with torch.no_grad():
+                    params_target = functional_call(
+                        hyper,
+                        (adapted_params_hyper, buffers_hyper),
+                        (dist_inner,)
+                    )
+
+                    z = torch.cat((ref_mu, ref_logvar), dim=1)
+                    logits = target.forward(z, params_target)
+                    emb = F.normalize(logits, p=2, dim=1).cpu()
+
+
+                target_embeddings_over_time[epoch] = {
+                    "embeddings": emb,
+                    "labels": ref_labels.clone(),
+                }
+                torch.save(
+                    target_embeddings_over_time,
+                    Path(__file__).parent / "notebooks" / "target_embeddings_over_time.pt"
+                )
 
         acc_no_training, acc_training = evaluate_classification(hyper, target, resources, distributions_targets, mu_max_dist)
         inner_losses[dataset_name].append(inner_loss.detach().item())
