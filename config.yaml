@@ -6,7 +6,7 @@ training:
   #epochs_hyper: 4000
   #epochs_vae: 100
   epochs_hyper: 2000
-  epochs_vae: 20
+  epochs_vae: 10
 
   lr_outer: 1e-5
   lr_vae: 1e-4
