@@ -24,6 +24,7 @@ meta:
 data:
   image_width_height: 28
   num_classes: 4
+  use_combined_loader: true  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
 
 vae:
   vae_head_dim: 128
