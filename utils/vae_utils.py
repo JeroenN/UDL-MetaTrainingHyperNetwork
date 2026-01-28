@@ -23,14 +23,20 @@ def ssim_loss(img1, img2, window_size=11, reduction="mean"):
     return 1 - ssim_map.mean() if reduction == "mean" else 1 - ssim_map
 
 
-def loss_function(recon_x, x, mu, logvar):
+def loss_function(recon_x, x, mu, logvar,
+                  epoch, total_epochs,
+                  beta_start=0.0, beta_end=1.0):
 
     MSE = F.mse_loss(recon_x, x, reduction="sum")
 
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    ssim = MSE * ssim_loss(recon_x, x)
+    ssim = ssim_loss(recon_x, x)
 
-    return MSE + ssim + KLD
+    # beta annealing (linear)
+    t = epoch / total_epochs
+    beta = beta_start + (beta_end - beta_start) * t
+    
+    return MSE + ssim + beta * KLD
 
 
 def loss_mse(recon_x, x, mu, logvar):
@@ -112,6 +118,8 @@ def train_vae(
     log_interval,
     vae_description,
     models_folder,
+    beta_start=0.0,
+    beta_end=1.0,
 ):
     optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
     mu = []
@@ -126,7 +134,9 @@ def train_vae(
 
             optimizer.zero_grad()
             reconstruct, mu, logvar = vae(x)
-            loss = loss_function(reconstruct, x, mu, logvar)
+            loss = loss_function(reconstruct, x, mu, logvar,                
+                epoch=epoch, total_epochs=epochs,
+                beta_start=beta_start, beta_end=beta_end)
 
             loss.backward()
             optimizer.step()
