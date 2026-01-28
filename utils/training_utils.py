@@ -41,6 +41,8 @@ def train_vae_for_dataset(
     log_interval,
     vae_description,
     models_folder,
+    beta_start,
+    beta_end,
 ):
     """Train VAE on a specific dataset subset"""
     print(f"Training VAE for {dataset_name}...")
@@ -63,6 +65,8 @@ def train_vae_for_dataset(
         log_interval,
         vae_description,
         models_folder,
+        beta_start,
+        beta_end
     )
 
 
@@ -77,6 +81,8 @@ def train_shared_vae(
     log_interval,
     vae_description,
     models_folder,
+    beta_start,
+    beta_end,
 ):
     print(f"Training a shared VAE on {len(train_datasets)} training subsets")
 
@@ -117,6 +123,8 @@ def train_shared_vae(
         log_interval,
         vae_description,
         models_folder,
+        beta_start,
+        beta_end,
     )
 
     vae.eval()

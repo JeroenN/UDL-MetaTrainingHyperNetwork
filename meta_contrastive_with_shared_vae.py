@@ -78,6 +78,8 @@ head_hidden = CFG["hypernet"]["head_hidden"]
 use_bias = CFG["hypernet"]["use_bias"]
 hidden_layers = CFG["target_net"]["hidden_layers"]
 output_head = CFG["target_net"]["output_head"]
+beta_start = CFG["vae"]["beta_start"]
+beta_end = CFG["vae"]["beta_end"]
 
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
@@ -193,6 +195,8 @@ class ResourceManager:
                 log_interval=log_interval,
                 vae_description=vae_description,
                 models_folder=models_folder,
+                beta_start=beta_start,
+                beta_end=beta_end,
             )
 
         self.shared_vae.to(device).eval()
@@ -241,6 +245,8 @@ class ResourceManager:
                 log_interval=log_interval,
                 vae_description=vae_description,
                 models_folder=models_folder,
+                beta_start=beta_start,
+                beta_end=beta_end,
             )
 
         vae.to(device).eval()
@@ -448,6 +454,7 @@ def evaluate_classification(
                 loss, current_params_hyper.values(), create_graph=False
             )
 
+
             current_params_hyper = {
                 name: (p - g * lr_inner).detach().requires_grad_(True)
                 for (name, p), g in zip(current_params_hyper.items(), grads)
@@ -565,6 +572,12 @@ def meta_training(
 
         optimizer.zero_grad()
         outer_loss.backward()
+
+        ## Print gradients
+        for name, p in hyper.named_parameters():
+            if p.grad is not None:
+                print(f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}")
+        
         optimizer.step()
 
         acc_no_training, acc_training = evaluate_classification(
