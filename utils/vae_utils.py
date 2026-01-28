@@ -1,8 +1,8 @@
-import torch
-import torch.nn as nn
-import matplotlib.pyplot as plt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -23,9 +23,9 @@ def ssim_loss(img1, img2, window_size=11, reduction="mean"):
     return 1 - ssim_map.mean() if reduction == "mean" else 1 - ssim_map
 
 
-def loss_function(recon_x, x, mu, logvar,
-                  epoch, total_epochs,
-                  beta_start=0.0, beta_end=1.0):
+def loss_function(
+    recon_x, x, mu, logvar, epoch, total_epochs, beta_start=0.0, beta_end=1.0
+):
 
     MSE = F.mse_loss(recon_x, x, reduction="sum")
 
@@ -35,7 +35,7 @@ def loss_function(recon_x, x, mu, logvar,
     # beta annealing (linear)
     t = epoch / total_epochs
     beta = beta_start + (beta_end - beta_start) * t
-    
+
     return MSE + ssim + beta * KLD
 
 
@@ -50,8 +50,7 @@ def loss_mse_only(recon_x, x, mu, logvar):
     return MSE
 
 
-def evaluate_vae(vae, test_loader, epoch,
-                 total_epochs, beta_start, beta_end):
+def evaluate_vae(vae, test_loader, epoch, total_epochs, beta_start, beta_end):
     vae.eval()
 
     running_loss = 0.0
@@ -65,9 +64,16 @@ def evaluate_vae(vae, test_loader, epoch,
             reconstruct, mu, logvar = vae(x)
             list_mu.append(mu.cpu())
             list_logvar.append(logvar.cpu())
-            loss = loss_function(reconstruct, x, mu, logvar,
-                epoch=epoch, total_epochs=1,
-                beta_start=0.0, beta_end=1.0)
+            loss = loss_function(
+                reconstruct,
+                x,
+                mu,
+                logvar,
+                epoch=epoch,
+                total_epochs=1,
+                beta_start=0.0,
+                beta_end=1.0,
+            )
 
             # Normalize loss per pixel
             batch_size = x.size(0)
@@ -139,18 +145,25 @@ def train_vae(
 
             optimizer.zero_grad()
             reconstruct, mu, logvar = vae(x)
-            loss = loss_function(reconstruct, x, mu, logvar,                
-                epoch=epoch, total_epochs=epochs,
-                beta_start=beta_start, beta_end=beta_end)
+            loss = loss_function(
+                reconstruct,
+                x,
+                mu,
+                logvar,
+                epoch=epoch,
+                total_epochs=epochs,
+                beta_start=beta_start,
+                beta_end=beta_end,
+            )
 
             loss.backward()
             optimizer.step()
 
             # Add KL divergence to history
             with torch.no_grad():
-                kl_term = 0.5 * (
-                    mu.pow(2) + logvar.exp() - 1.0 - logvar
-                ).sum(dim=1).mean()
+                kl_term = (
+                    0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar).sum(dim=1).mean()
+                )
                 kl_history.append(kl_term.item())
 
             # Normalize loss per pixel
@@ -160,10 +173,14 @@ def train_vae(
 
         print(f"VAE: Epoch {epoch} loss_per_pixel={running_loss/len(train_loader):.4f}")
         if epoch % log_interval == 0:
-            evaluate_vae(vae, test_loader, epoch, 
+            evaluate_vae(
+                vae,
+                test_loader,
+                epoch,
                 total_epochs=epochs,
                 beta_start=beta_start,
-                beta_end=beta_end)
+                beta_end=beta_end,
+            )
             file_name = name + vae_description + ".pth"
             models_folder.mkdir(parents=True, exist_ok=True)
             models_epochs_folder = models_folder / f"{epochs}_epochs"

@@ -1,36 +1,36 @@
+import random
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from pathlib import Path
-import random
-import numpy as np
 import yaml
-from typing import Union, Dict, List, Optional, Tuple, Any, Callable
-from tqdm import tqdm
-from collections import defaultdict
-import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
+from torch.func import functional_call, grad
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
+from dataset_loading import Dataset, get_dataset
 from utils import (
     VAE,
-    TargetNet,
     HyperNetwork,
+    TargetNet,
+    compute_geometry_consistency_loss,
     get_gaussian_from_vae,
+    plot_kl,
     train_shared_vae,
     train_vae_for_dataset,
-    plot_kl
 )
-from utils import compute_geometry_consistency_loss
-from dataset_loading import get_dataset, Dataset
-
-from torch.func import functional_call, grad
 
 try:
     torch.backends.nnpack.enabled = False
 except AttributeError:
     pass
 
-#TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist"]
+# TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist"]
 TRAIN_DATASET_NAMES = ["kmnist"]
 TEST_DATASET_NAME = ["mnist"]
 
@@ -316,8 +316,6 @@ class ResourceManager:
         distribution = torch.concat((mu, logvar), dim=1)
         self.vae_distributions[dataset_name] = distribution
 
-    
-
 
 def flatten_params(params):
     flat = []
@@ -469,7 +467,6 @@ def evaluate_classification(
                 loss, current_params_hyper.values(), create_graph=False
             )
 
-
             current_params_hyper = {
                 name: (p - g * lr_inner).detach().requires_grad_(True)
                 for (name, p), g in zip(current_params_hyper.items(), grads)
@@ -591,8 +588,10 @@ def meta_training(
         ## Print gradients
         for name, p in hyper.named_parameters():
             if p.grad is not None:
-                print(f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}")
-        
+                print(
+                    f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}"
+                )
+
         optimizer.step()
 
         acc_no_training, acc_training = evaluate_classification(
@@ -629,6 +628,12 @@ def meta_training(
 
 
 def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
+    """
+    Function to plot the KL divergence histories.
+
+    :param histories: Dictionary of dataset names to KL histories OR a single KL history list.
+    :param out_dir: Directory to save the plots.
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -660,8 +665,6 @@ def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
     )
 
 
-
-
 def main():
 
     print(f"Working on device {device}")
@@ -674,10 +677,13 @@ def main():
     )
 
     if shared_vae:
-        plot_kl_histories(resources.kl_history_shared, visualization_folder / "kl_plots")
+        plot_kl_histories(
+            resources.kl_history_shared, visualization_folder / "kl_plots"
+        )
     else:
-        plot_kl_histories(resources.kl_history_by_dataset, visualization_folder / "kl_plots")
-
+        plot_kl_histories(
+            resources.kl_history_by_dataset, visualization_folder / "kl_plots"
+        )
 
     hyper = HyperNetwork(
         layer_sizes=target_layer_sizes,

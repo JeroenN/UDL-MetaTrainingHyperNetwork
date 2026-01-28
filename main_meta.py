@@ -1,23 +1,23 @@
 # hypernet_mlp.py
+import random
+import re
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from pathlib import Path
-import random
-from typing import Dict, List, Optional, Tuple, Union
-from sklearn.cluster import KMeans
-from scipy.optimize import linear_sum_assignment
-import numpy as np
 import yaml
-import re
+from scipy.optimize import linear_sum_assignment
+from sklearn.cluster import KMeans
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from collections import defaultdict
-import matplotlib.pyplot as plt
 
-from utils import VAE, TargetNet, HyperNetwork, get_gaussian_from_vae, train_vae
-from dataset_loading import get_dataset, Dataset
-
+from dataset_loading import Dataset, get_dataset
+from utils import VAE, HyperNetwork, TargetNet, get_gaussian_from_vae, train_vae
 
 # Disable nnpack to avoid potential issues on some systems
 try:
@@ -25,22 +25,29 @@ try:
 except AttributeError:
     pass
 
-train_dataset_names = ["hebrew_chars", "fashion_mnist", "kmnist",]# "math_shapes"]
+train_dataset_names = [
+    "hebrew_chars",
+    "fashion_mnist",
+    "kmnist",
+]  # "math_shapes"]
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
 device = torch.device(
-    "cuda" if torch.cuda.is_available()
+    "cuda"
+    if torch.cuda.is_available()
     else "mps" if torch.backends.mps.is_available() else "cpu"
 )
 
 num_workers = 2 if device.type == "cuda" else 0
 pin_memory = device.type == "cuda"
 
+
 def load_config(path: Union[str, Path]) -> dict:
     path = Path(path)
     with path.open("r") as f:
         return yaml.safe_load(f)
+
 
 CFG = load_config(Path(__file__).parent / "config.yaml")
 
@@ -84,6 +91,7 @@ print("condition_dim =", condition_dim)
 
 n_samples_conditioning = batch_size_innerloop
 
+
 class ResourceManager:
     def __init__(self, dataset_names, test_name, model_folder):
         self.loaders = {}
@@ -93,15 +101,17 @@ class ResourceManager:
         self.model_folder = model_folder
 
         self.vae_distributions = {}
-        
+
         all_names = list(set(dataset_names + [test_name]))
-        
-        for name in tqdm(all_names, desc = "Loading datasets"):
+
+        for name in tqdm(all_names, desc="Loading datasets"):
             vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
             file_name = name + vae_description + ".pth"
             path = self.model_folder / file_name
             if path.exists():
-                vae.load_state_dict(torch.load(path, map_location=device)["hyper_state_dict"])
+                vae.load_state_dict(
+                    torch.load(path, map_location=device)["hyper_state_dict"]
+                )
             else:
                 print(f"vae not found at {path}. Starting VAE training")
                 train_vaes(name)
@@ -112,23 +122,29 @@ class ResourceManager:
 
             bs = batch_size_innerloop
 
-            datasets = get_dataset(name=name, preprocess=True, to_tensor=True, flatten=False, class_limit = num_classes)
+            datasets = get_dataset(
+                name=name,
+                preprocess=True,
+                to_tensor=True,
+                flatten=False,
+                class_limit=num_classes,
+            )
             loaders_per_dataset = []
             iters_per_dataset = []
             for idx, ds in enumerate(datasets):
                 # Use 'test' split for the test set, 'train' for others
-                split = "train" #"test" if name == test_name and name not in inner_names + outer_names else "train"
+                split = "train"  # "test" if name == test_name and name not in inner_names + outer_names else "train"
                 dataset = Dataset(ds[split])
-    
+
                 loader = DataLoader(
                     dataset,
                     batch_size=bs,
                     shuffle=(split == "train"),
                     num_workers=num_workers,
-                    pin_memory=pin_memory
+                    pin_memory=pin_memory,
                 )
                 loaders_per_dataset.append(loader)
-                iters_per_dataset.append(iter(loader)) # Create infinite iterator
+                iters_per_dataset.append(iter(loader))  # Create infinite iterator
                 self.loaders[name] = loaders_per_dataset
                 self.iters[name] = iters_per_dataset
 
@@ -140,7 +156,7 @@ class ResourceManager:
         except StopIteration:
             self.iters[dataset_name][idx] = iter(self.loaders[dataset_name][idx])
             X, y = next(self.iters[dataset_name][idx])
-            
+
         X = X.to(device)
         y = y.to(device)
 
@@ -148,28 +164,27 @@ class ResourceManager:
         label_map = {lab.item(): i for i, lab in enumerate(unique_labels)}
         y = torch.tensor([label_map[int(lab)] for lab in y], device=y.device)
 
-
         vae = self.get_vae(dataset_name)
-        
+
         # No grad for VAE part
         with torch.no_grad():
             mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
-        
+
         mu = mu.to(device)
         logvar = logvar.to(device)
         return X, y, mu, logvar
-    
+
     def get_loader(self, dataset_name, idx: Optional[int] = None):
         if idx is None:
-            return self.loaders[dataset_name] 
+            return self.loaders[dataset_name]
         return self.loaders[dataset_name][idx]
-    
+
     def get_vae(self, dataset_name):
         return self.vaes[dataset_name]
-    
+
     def get_vae_data_distribution(self, dataset_name, idx):
         return self.vae_distributions[dataset_name][idx]
-        
+
     def set_vae_data_distributions(self, dataset_name):
         vae = self.get_vae(dataset_name)
         loaders = self.get_loader(dataset_name)
@@ -180,29 +195,35 @@ class ResourceManager:
             with torch.no_grad():
                 for batch_idx, (X, y) in enumerate(loader):
                     X = X.to(device)
-                    
+
                     if ablation_mode == "pixel_noise":
                         X = torch.randn_like(X) * ablation_noise_std
                         X = torch.clamp(X, 0.0, 1.0)
-        
-                    mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize= False)
+
+                    mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
                     mus.append(mu)
                     logvars.append(logvar)
 
-            mu = torch.concat(mus, dim =0)
+            mu = torch.concat(mus, dim=0)
             logvar = torch.concat(logvars, dim=0)
 
-            distribution = torch.concat((mu, logvar), dim =1)
+            distribution = torch.concat((mu, logvar), dim=1)
             distribution_per_dataset.append(distribution)
-            
+
         self.vae_distributions[dataset_name] = distribution_per_dataset
 
-def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, centroids, distributions_targets):
+
+def evaluate_clustering(
+    hyper,
+    target: TargetNet,
+    resources: ResourceManager,
+    centroids,
+    distributions_targets,
+):
     hyper.eval()
-    
+
     vae_distribution = resources.get_vae_data_distribution(test_dataset_name, 0)
     params_old = hyper(vae_distribution)
-
 
     all_assignments = []
     all_y = []
@@ -210,7 +231,7 @@ def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, ce
         for batch_idx, (distribution, y) in enumerate(distributions_targets):
             logits = target.forward(distribution, params_old)
             logits = F.normalize(logits, p=2, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
+            # assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
             sim = torch.matmul(logits, centroids.T)
             assignments = F.softmax(sim / 0.01, dim=1)
             all_assignments.append(assignments.cpu())
@@ -219,14 +240,16 @@ def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, ce
             if batch_idx == 20:
                 break
 
-    all_assignments = torch.concat(all_assignments, dim = 0)
-    all_y = torch.concat(all_y, dim =0)
+    all_assignments = torch.concat(all_assignments, dim=0)
+    all_y = torch.concat(all_y, dim=0)
     acc_no_training = supervised_hungarian_accuracy(all_assignments, all_y)
     params_target = params_old
     for batch_idx, (distribution, y) in enumerate(distributions_targets):
         logits = target.forward(distribution, params_target)
         logits = F.normalize(logits, p=2, dim=1)
-        inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
+        inner_loss = soft_clustering_loss(
+            logits, centroids, temperature=0.5, alpha=0.01
+        )
 
         flat_params = flatten_params(params_target)
         grads = torch.autograd.grad(inner_loss, flat_params)
@@ -241,75 +264,81 @@ def evaluate_clustering(hyper, target: TargetNet, resources: ResourceManager, ce
             logits = F.normalize(logits, p=2, dim=1)
             sim = torch.matmul(logits, centroids.T)
             assignments = F.softmax(sim / 0.01, dim=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
+            # assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=1.0)
             all_assignments.append(assignments.cpu())
 
-
-    all_assignments = torch.concat(all_assignments, dim = 0)
+    all_assignments = torch.concat(all_assignments, dim=0)
     acc_training = supervised_hungarian_accuracy(all_assignments, all_y)
     return acc_no_training, acc_training
 
 
 def pairwise_squared_distances(x, y):
-    x_norm = (x ** 2).sum(dim=1, keepdim=True)
-    y_norm = (y ** 2).sum(dim=1).unsqueeze(0)
+    x_norm = (x**2).sum(dim=1, keepdim=True)
+    y_norm = (y**2).sum(dim=1).unsqueeze(0)
     return x_norm + y_norm - 2.0 * x @ y.T
 
 
 def compute_soft_dist(embeddings, centroids, temperature=1.0):
-    dists = pairwise_squared_distances(embeddings, centroids)#torch.cdist(embeddings, centroids, p=2)**2
+    dists = pairwise_squared_distances(
+        embeddings, centroids
+    )  # torch.cdist(embeddings, centroids, p=2)**2
     assignments = F.softmax(-dists / temperature, dim=1)
 
     return assignments
-    
 
-def compute_soft_centroids(embeddings, K = num_classes, iterations=1, temperature=1.0):
+
+def compute_soft_centroids(embeddings, K=num_classes, iterations=1, temperature=1.0):
     indices = torch.randperm(embeddings.size(0))[:K]
     initial_centroids = embeddings[indices].detach()
     centroids = initial_centroids
-    
+
     for _ in range(iterations):
-        dists = pairwise_squared_distances(embeddings, centroids)#torch.cdist(embeddings, centroids, p=2)**2
-        
-        assignments = F.softmax(-dists / temperature, dim=1) 
-        
-        weight_sums = assignments.sum(dim=0, keepdim=True).T 
-        
+        dists = pairwise_squared_distances(
+            embeddings, centroids
+        )  # torch.cdist(embeddings, centroids, p=2)**2
+
+        assignments = F.softmax(-dists / temperature, dim=1)
+
+        weight_sums = assignments.sum(dim=0, keepdim=True).T
+
         weighted_embeddings_sum = torch.matmul(assignments.T, embeddings)
-        
+
         centroids = weighted_embeddings_sum / (weight_sums + 1e-8)
-        
+
     return centroids, assignments
+
 
 def soft_clustering_loss(embeddings, centroids, temperature=0.5, alpha=1.0):
     sim = torch.matmul(embeddings, centroids.T)
-    
-    assignments = F.softmax(sim / temperature, dim=1) # (N, K)
-    
+
+    assignments = F.softmax(sim / temperature, dim=1)  # (N, K)
+
     weighted_sim = torch.sum(assignments * sim, dim=1)
     clustering_loss = torch.mean(1.0 - weighted_sim)
-    
-    p_bar = assignments.mean(dim=0) # (K,)
+
+    p_bar = assignments.mean(dim=0)  # (K,)
     entropy_reg = -torch.sum(p_bar * torch.log(p_bar + 1e-8))
-    
+
     total_loss = clustering_loss - (alpha * entropy_reg)
-    
+
     return total_loss
 
 
-def supervised_hungarian_accuracy(soft_assignments: torch.Tensor, true_labels: torch.Tensor) -> float:
+def supervised_hungarian_accuracy(
+    soft_assignments: torch.Tensor, true_labels: torch.Tensor
+) -> float:
     device = soft_assignments.device
     n_samples, n_clusters = soft_assignments.shape
 
     cost_matrix = torch.zeros((n_clusters, n_clusters), device=device)
     probs = soft_assignments.detach()
-    
+
     for i in range(n_clusters):
         cluster_mask = probs[:, i]
         for j in range(n_clusters):
             label_mask = (true_labels == j).float()
             cost_matrix[i, j] = torch.sum(cluster_mask * label_mask)
-    
+
     row_ind, col_ind = linear_sum_assignment(-cost_matrix.cpu().numpy())
     mapping = torch.zeros(n_clusters, dtype=torch.long, device=device)
     for cluster_idx, label_idx in zip(row_ind, col_ind):
@@ -326,19 +355,19 @@ def supervised_hungarian_accuracy(soft_assignments: torch.Tensor, true_labels: t
 def supervised_hungarian_loss(soft_assignments, true_labels):
     device = soft_assignments.device
     n_samples, n_clusters = soft_assignments.shape
-    
+
     cost_matrix = torch.zeros((n_clusters, n_clusters), device=device)
 
-    probs = soft_assignments.detach() 
-    
+    probs = soft_assignments.detach()
+
     for i in range(n_clusters):
-        cluster_mask = probs[:, i] 
+        cluster_mask = probs[:, i]
         for j in range(n_clusters):
             label_mask = (true_labels == j).float()
             cost_matrix[i, j] = torch.sum(cluster_mask * label_mask)
 
     row_ind, col_ind = linear_sum_assignment(-cost_matrix.cpu().numpy())
-    
+
     mapping = torch.zeros(n_clusters, dtype=torch.long, device=device)
     for cluster_idx, label_idx in zip(row_ind, col_ind):
         mapping[cluster_idx] = label_idx
@@ -347,8 +376,9 @@ def supervised_hungarian_loss(soft_assignments, true_labels):
     reordered_assignments = soft_assignments[:, idx]
 
     loss = F.nll_loss(torch.log(reordered_assignments + 1e-8), true_labels)
-    
+
     return loss
+
 
 def flatten_params(params):
     flat = []
@@ -357,6 +387,7 @@ def flatten_params(params):
         if b is not None:
             flat.append(b)
     return flat
+
 
 def unflatten_params(flat_params, template_params):
     new_params = []
@@ -372,27 +403,26 @@ def unflatten_params(flat_params, template_params):
         new_params.append((W_new, b_new))
     return new_params
 
+
 def get_fixed_centroids(num_classes, dim, device):
     C = torch.eye(num_classes, dim)
     C = F.normalize(C, p=2, dim=1)
     return C.to(device)
 
 
-def plot_losses_and_accuracies(inner_losses_dict,
-                               outer_losses_dict,
-                               acc_no_training_list,
-                               acc_training_list):
-    Path(Path(__file__).parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
+def plot_losses_and_accuracies(
+    inner_losses_dict, outer_losses_dict, acc_no_training_list, acc_training_list
+):
+    Path(Path(__file__).parent / "visualization" / "plots").mkdir(
+        parents=True, exist_ok=True
+    )
     plt.figure()
     for dataset_name in inner_losses_dict:
-        plt.plot(
-            inner_losses_dict[dataset_name],
-            label=f"{dataset_name} - inner loss"
-        )
+        plt.plot(inner_losses_dict[dataset_name], label=f"{dataset_name} - inner loss")
         plt.plot(
             outer_losses_dict[dataset_name],
             linestyle="--",
-            label=f"{dataset_name} - outer loss"
+            label=f"{dataset_name} - outer loss",
         )
 
     plt.xlabel("Iteration")
@@ -401,7 +431,6 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.legend()
     plt.grid(True)
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "loss.png")
-
 
     plt.figure()
     plt.plot(acc_no_training_list, label="Accuracy (no training)")
@@ -414,11 +443,12 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.grid(True)
     plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
 
+
 def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceManager):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_hyper)
-    
+
     centroids = get_fixed_centroids(num_classes, output_head, device)
-    
+
     distributions_targets = []
     loader = resources.get_loader(test_dataset_name, 0)
     vae = resources.get_vae(test_dataset_name)
@@ -427,11 +457,11 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             X = X.to(device)
             mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
             distribution = torch.concat((mu, logvar), dim=1)
-            distributions_targets.append((distribution, y)) 
+            distributions_targets.append((distribution, y))
 
             if batch_idx == 20:
                 break
-    
+
     inner_losses = defaultdict(list)
     outer_losses = defaultdict(list)
     acc_training_list = []
@@ -442,16 +472,20 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
         idx = np.random.randint(0, len(resources.get_loader(dataset_name)))
         vae_distribution = resources.get_vae_data_distribution(dataset_name, idx)
         params_target = hyper(vae_distribution)
-        
-        #Innerloop
+
+        # Innerloop
         for _ in range(steps_innerloop):
-            X, y, mu, logvar = resources.get_batch("mnist", 0)#resources.get_batch(dataset_name, idx)
+            X, y, mu, logvar = resources.get_batch(
+                "mnist", 0
+            )  # resources.get_batch(dataset_name, idx)
 
             distribution = torch.concat((mu, logvar), dim=1)
             logits = target.forward(distribution, params_target)
             logits = F.normalize(logits, p=2, dim=1)
 
-            inner_loss = soft_clustering_loss(logits, centroids, temperature=0.5, alpha=0.01)
+            inner_loss = soft_clustering_loss(
+                logits, centroids, temperature=0.5, alpha=0.01
+            )
 
             flat_params = flatten_params(params_target)
             grads = torch.autograd.grad(inner_loss, flat_params, create_graph=True)
@@ -459,28 +493,29 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
 
             params_target = unflatten_params(flat_params, params_target)
 
-
         outer_loss = 0.0
-        #Outerloop
+        # Outerloop
         for _ in range(steps_outerloop):
             X, y, mu, logvar = resources.get_batch(dataset_name, idx)
             distribution = torch.concat((mu, logvar), dim=1)
             logits = target.forward(distribution, params_target)
             logits = F.normalize(logits, p=2, dim=1)
-            #centroids, assignments = compute_soft_centroids(logits, K = num_classes, iterations=3, temperature=1)
-            #assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=0.5)
+            # centroids, assignments = compute_soft_centroids(logits, K = num_classes, iterations=3, temperature=1)
+            # assignments = compute_soft_dist(embeddings=logits, centroids = centroids, temperature=0.5)
             sim = torch.matmul(logits, centroids.T)
             assignments = F.softmax(sim / 0.1, dim=1)
             loss = supervised_hungarian_loss(assignments, y)
 
-            outer_loss +=loss
+            outer_loss += loss
 
         outer_loss = outer_loss / steps_outerloop
         optimizer.zero_grad()
         outer_loss.backward()
         optimizer.step()
 
-        acc_no_training, acc_training = evaluate_clustering(hyper, target, resources, centroids, distributions_targets)
+        acc_no_training, acc_training = evaluate_clustering(
+            hyper, target, resources, centroids, distributions_targets
+        )
         inner_losses[dataset_name].append(inner_loss.detach().item())
         outer_losses[dataset_name].append(outer_loss.detach().item())
         acc_no_training_list.append(acc_no_training)
@@ -489,31 +524,58 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             print(f"accuracy no training {acc_no_training:.4f}")
             print(f"accuracy training {acc_training: .4f}")
             if epoch > 100:
-                print(f"average acc training last 100 {sum(acc_training_list[-100:])/100:.4f}")
-                print(f"average acc no training last 100 {sum(acc_no_training_list[-100:])/100:.4f}")
+                print(
+                    f"average acc training last 100 {sum(acc_training_list[-100:])/100:.4f}"
+                )
+                print(
+                    f"average acc no training last 100 {sum(acc_no_training_list[-100:])/100:.4f}"
+                )
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
-            plot_losses_and_accuracies(inner_losses, outer_losses, acc_no_training_list, acc_training_list)    
-        
+            plot_losses_and_accuracies(
+                inner_losses, outer_losses, acc_no_training_list, acc_training_list
+            )
+
 
 def train_vaes(dataset_name):
     print(f"Training VAE for {dataset_name}...")
-    datasets = get_dataset(name=dataset_name, preprocess=True, to_tensor=True, flatten=False)
+    datasets = get_dataset(
+        name=dataset_name, preprocess=True, to_tensor=True, flatten=False
+    )
     data = datasets[0]
-    train_loader = DataLoader(Dataset(data["train"]), batch_size=batch_size_vae, shuffle=True, num_workers=num_workers, pin_memory=pin_memory)
-    #test_loader = DataLoader(Dataset(data["test"]), batch_size=batch_size_vae, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
-    
-    vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(device)
-    train_vae(vae, train_loader, train_loader, dataset_name, lr_vae, epochs_vae, log_interval, vae_description, models_folder)
+    train_loader = DataLoader(
+        Dataset(data["train"]),
+        batch_size=batch_size_vae,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+    # test_loader = DataLoader(Dataset(data["test"]), batch_size=batch_size_vae, shuffle=False, num_workers=num_workers, pin_memory=pin_memory)
+
+    vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(
+        device
+    )
+    train_vae(
+        vae,
+        train_loader,
+        train_loader,
+        dataset_name,
+        lr_vae,
+        epochs_vae,
+        log_interval,
+        vae_description,
+        models_folder,
+    )
+
 
 def main():
     if retrain_vae:
         train_vaes()
 
     resources = ResourceManager(
-        dataset_names = train_dataset_names,
-        test_name = test_dataset_name,
-        model_folder = models_folder
+        dataset_names=train_dataset_names,
+        test_name=test_dataset_name,
+        model_folder=models_folder,
     )
 
     hyper = HyperNetwork(
@@ -522,10 +584,11 @@ def main():
         head_hidden=head_hidden,
         use_bias=use_bias,
     ).to(device)
-    
+
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
-    
+
     meta_training(hyper, target, resources)
+
 
 if __name__ == "__main__":
     main()

@@ -1,10 +1,11 @@
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-
-from utils import train_vae
 from dataset_loading import Dataset
-from pathlib import Path
-import matplotlib.pyplot as plt
+from utils import train_vae
+
 
 def plot_kl(kl_history, save_path=None):
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +82,7 @@ def train_vae_for_dataset(
         vae_description,
         models_folder,
         beta_start,
-        beta_end
+        beta_end,
     )
     return vae, kl_history
 
