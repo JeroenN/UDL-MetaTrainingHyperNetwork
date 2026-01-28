@@ -1,29 +1,29 @@
+import random
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from pathlib import Path
-import random
-import numpy as np
 import yaml
-from typing import Union, Dict, List, Optional, Tuple, Any, Callable
-from tqdm import tqdm
-from collections import defaultdict
-import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
+from torch.func import functional_call, grad
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
+from dataset_loading import Dataset, get_dataset
 from utils import (
     VAE,
-    TargetNet,
     HyperNetwork,
+    TargetNet,
+    compute_geometry_consistency_loss,
     get_gaussian_from_vae,
+    plot_kl,
     train_shared_vae,
     train_vae_for_dataset,
-    plot_kl,
 )
-from utils import compute_geometry_consistency_loss
-from dataset_loading import get_dataset, Dataset
-
-from torch.func import functional_call, grad
 
 try:
     torch.backends.nnpack.enabled = False
