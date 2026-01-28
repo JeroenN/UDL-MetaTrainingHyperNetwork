@@ -5,8 +5,8 @@ training:
 
   #epochs_hyper: 4000
   #epochs_vae: 100
-  epochs_hyper: 4000
-  epochs_vae: 10
+  epochs_hyper: 2000
+  epochs_vae: 20
 
   lr_outer: 1e-5
   lr_vae: 1e-4
@@ -26,12 +26,12 @@ data:
   num_classes: 4
 
 vae:
-  vae_head_dim: 32
+  vae_head_dim: 128
   n_samples_conditioning: 100
   retrain_vae: false
-  vae_description: "_head_32"
+  vae_description: "_head_128"
   shared_vae: true
-  beta_start: 0.1
+  beta_start: 0.25
   beta_end: 1.0
 
 model:
@@ -52,4 +52,7 @@ target_net:
 ablation:
   mode: "none"
   noise_std: 0.5
+
+troubleshoot:
+  print_grads: false
 

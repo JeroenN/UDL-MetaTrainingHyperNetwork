@@ -1,8 +1,25 @@
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-
-from utils import train_vae
 from dataset_loading import Dataset
+
+from .vae_utils import train_vae
+
+
+def plot_kl(kl_history, save_path=None):
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.figure()
+    plt.plot(kl_history, label="KL per batch (mean per sample)")
+    plt.xlabel("Training step")
+    plt.ylabel("KL")
+    plt.title("VAE KL during training")
+    plt.grid(True)
+    plt.legend()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
 
 
 def flatten_params(params):
@@ -55,7 +72,7 @@ def train_vae_for_dataset(
         pin_memory=pin_memory,
     )
 
-    train_vae(
+    _, kl_history = train_vae(
         vae,
         train_loader,
         train_loader,
@@ -66,8 +83,9 @@ def train_vae_for_dataset(
         vae_description,
         models_folder,
         beta_start,
-        beta_end
+        beta_end,
     )
+    return vae, kl_history
 
 
 def train_shared_vae(
@@ -113,7 +131,7 @@ def train_shared_vae(
     )
 
     # Train VAE
-    train_vae(
+    _, kl_history = train_vae(
         vae,
         combined_loader,
         combined_loader,  # Using same for validation for simplicity
@@ -128,4 +146,4 @@ def train_shared_vae(
     )
 
     vae.eval()
-    return vae
+    return vae, kl_history

@@ -1,8 +1,8 @@
 import os
 from collections import Counter
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 from .dataset import get_dataset, preprocess_image
 

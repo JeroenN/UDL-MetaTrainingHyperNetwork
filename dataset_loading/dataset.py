@@ -1,11 +1,12 @@
-from datasets import load_dataset
-from torchvision import transforms
+import math
+from typing import Union
+
 import numpy as np
 import torch
-from PIL import Image
-from typing import Union
+from datasets import load_dataset
 from matplotlib import pyplot as plt
-import math
+from PIL import Image
+from torchvision import transforms
 
 # import fiftyone as fo
 # from fiftyone.utils.huggingface import load_from_hub
@@ -123,16 +124,17 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
 def split_dataset_by_classes(dataset, class_limit):
     max_label = max(dataset["train"]["label"])
     num_classes = max_label + 1
-    
-    if num_classes < class_limit:
-        print(f"[WARN] Number of classes in dataset ({num_classes}) is smaller than class_limit ({class_limit}). Returning original dataset.")
-        return [dataset]
-    
-    n_datasets = num_classes // class_limit 
 
+    if num_classes < class_limit:
+        print(
+            f"[WARN] Number of classes in dataset ({num_classes}) is smaller than class_limit ({class_limit}). Returning original dataset."
+        )
+        return [dataset]
+
+    n_datasets = num_classes // class_limit
 
     datasets = []
-    for start in range(0, n_datasets*class_limit, class_limit):
+    for start in range(0, n_datasets * class_limit, class_limit):
         end = start + class_limit
         ds = dataset.filter(lambda ex, s=start, e=end: s <= ex["label"] < e)
         datasets.append(ds)

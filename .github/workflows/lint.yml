@@ -1,0 +1,40 @@
+name: Lint Python Files
+
+on:
+  push:
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: |
+          pip install black ruff
+
+      - name: Format with Black
+        run: |
+          black .
+
+      - name: Sort imports with Ruff (imports only)
+        run: |
+          ruff check --fix .
+
+      - name: Fail if formatting changed files
+        run: |
+          git diff --exit-code

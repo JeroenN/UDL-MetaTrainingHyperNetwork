@@ -1,39 +1,44 @@
+import random
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from pathlib import Path
-import random
-import numpy as np
 import yaml
-from typing import Union, Dict, List, Optional, Tuple, Any, Callable
-from tqdm import tqdm
-from collections import defaultdict
-import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
+from torch.func import functional_call, grad
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
+from dataset_loading import Dataset, get_dataset
 from utils import (
     VAE,
-    TargetNet,
     HyperNetwork,
+    TargetNet,
+    compute_geometry_consistency_loss,
     get_gaussian_from_vae,
+    plot_kl,
     train_shared_vae,
     train_vae_for_dataset,
 )
-from utils import compute_geometry_consistency_loss
-from dataset_loading import get_dataset, Dataset
-
-from torch.func import functional_call, grad
 
 try:
     torch.backends.nnpack.enabled = False
 except AttributeError:
     pass
 
-#TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist"]
-TRAIN_DATASET_NAMES = ["kmnist", "fashion_mnist"]
+TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist", "math_shapes"]
+# TRAIN_DATASET_NAMES = ["kmnist"]
 TEST_DATASET_NAME = ["mnist"]
 
 models_folder = Path(__file__).parent / "models"
+visualization_folder = Path(__file__).parent / "visualization"
+# Ensure directories exist
+models_folder.mkdir(parents=True, exist_ok=True)
+visualization_folder.mkdir(parents=True, exist_ok=True)
 
 device = torch.device(
     "cuda"
@@ -81,6 +86,7 @@ hidden_layers = CFG["target_net"]["hidden_layers"]
 output_head = CFG["target_net"]["output_head"]
 beta_start = CFG["vae"]["beta_start"]
 beta_end = CFG["vae"]["beta_end"]
+print_grads = CFG["troubleshoot"]["print_grads"]
 
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
@@ -111,6 +117,9 @@ class ResourceManager:
 
         self.share_vae = share_vae
         self.shared_vae = None
+
+        self.kl_history_shared = None
+        self.kl_history_by_dataset = {}  # if you also train separate VAEs
 
         # Process training datasets
         for name in tqdm(train_dataset_names, desc="Loading train datasets"):
@@ -179,13 +188,14 @@ class ResourceManager:
                 torch.load(path, map_location=device)["hyper_state_dict"]
             )
             print(f"Loaded shared VAE from {path}")
+            self.kl_history_shared = None
         else:
             print(f"Shared VAE not found at {path}. Starting training...")
             # Collect only training subsets for VAE training (not test!)
             all_train_subsets = []
             for subset_name, subset in self.train_datasets.items():
                 all_train_subsets.append(subset)
-            train_shared_vae(
+            _, kl_history = train_shared_vae(
                 vae=self.shared_vae,
                 train_datasets=all_train_subsets,
                 batch_size_vae=batch_size_vae,
@@ -201,6 +211,7 @@ class ResourceManager:
             )
 
         self.shared_vae.to(device).eval()
+        self.kl_history_shared = kl_history
 
         # Assign shared VAE to all datasets (both train and test)
         for subset_name in self.train_datasets:
@@ -232,9 +243,10 @@ class ResourceManager:
             vae.load_state_dict(
                 torch.load(path, map_location=device)["hyper_state_dict"]
             )
+            self.kl_history_by_dataset[dataset_name] = None
         else:
             print(f"VAE for {dataset_name} not found. Starting training...")
-            train_vae_for_dataset(
+            _, kl_history = train_vae_for_dataset(
                 vae=vae,
                 dataset_name=dataset_name,
                 dataset=dataset_subset,
@@ -252,6 +264,7 @@ class ResourceManager:
 
         vae.to(device).eval()
         self.vaes[dataset_name] = vae
+        self.kl_history_by_dataset[dataset_name] = kl_history
 
     def get_batch(self, dataset_name, idx=None):
         # For compatibility, idx is ignored for single loader per dataset
@@ -455,7 +468,6 @@ def evaluate_classification(
                 loss, current_params_hyper.values(), create_graph=False
             )
 
-
             current_params_hyper = {
                 name: (p - g * lr_inner).detach().requires_grad_(True)
                 for (name, p), g in zip(current_params_hyper.items(), grads)
@@ -489,6 +501,7 @@ def meta_training(
     train_dataset_names,
     test_dataset_name,
     resources: ResourceManager,
+    print_grads: bool = False,
 ):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_outer)
 
@@ -575,10 +588,13 @@ def meta_training(
         outer_loss.backward()
 
         ## Print gradients
-        for name, p in hyper.named_parameters():
-            if p.grad is not None:
-                print(f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}")
-        
+        if print_grads:
+            for name, p in hyper.named_parameters():
+                if p.grad is not None:
+                    print(
+                        f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}"
+                    )
+
         optimizer.step()
 
         acc_no_training, acc_training = evaluate_classification(
@@ -614,6 +630,44 @@ def meta_training(
             plot_losses_and_accuracies(inner_losses, outer_losses, average_acc_diff)
 
 
+def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
+    """
+    Function to plot the KL divergence histories.
+
+    :param histories: Dictionary of dataset names to KL histories OR a single KL history list.
+    :param out_dir: Directory to save the plots.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # In case of per-dataset VAEs
+    if isinstance(histories, dict):
+        plotted = False
+        for name, hist in histories.items():
+            if hist is None or len(hist) == 0:
+                continue
+
+            plot_kl(
+                hist,
+                save_path=out_dir / f"{name}_kl.png",
+            )
+            plotted = True
+
+        if not plotted:
+            print("[KL] No per-dataset KL histories to plot.")
+        return
+
+    # In case of single history - shared VAE
+    if histories is None or len(histories) == 0:
+        print("[KL] No shared KL history to plot.")
+        return
+
+    plot_kl(
+        histories,
+        save_path=out_dir / "shared_vae_kl.png",
+    )
+
+
 def main():
 
     print(f"Working on device {device}")
@@ -624,6 +678,15 @@ def main():
         model_folder=models_folder,
         share_vae=shared_vae,
     )
+
+    if shared_vae:
+        plot_kl_histories(
+            resources.kl_history_shared, visualization_folder / "kl_plots"
+        )
+    else:
+        plot_kl_histories(
+            resources.kl_history_by_dataset, visualization_folder / "kl_plots"
+        )
 
     hyper = HyperNetwork(
         layer_sizes=target_layer_sizes,
@@ -644,7 +707,9 @@ def main():
     # Get list of training subset names for meta-training
     train_subset_names = list(resources.train_datasets.keys())
 
-    meta_training(hyper, target, train_subset_names, test_dataset_for_eval, resources)
+    meta_training(
+        hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads
+    )
 
 
 if __name__ == "__main__":

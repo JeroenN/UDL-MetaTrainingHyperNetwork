@@ -34,7 +34,6 @@ class HyperNetwork(nn.Module):
         self.condition_dim = condition_dim
         self.use_bias = use_bias
 
-
         self.heads = nn.ModuleList()
         self.query = nn.Parameter(torch.randn(condition_dim))
 
@@ -54,8 +53,8 @@ class HyperNetwork(nn.Module):
 
     def attention_pool(self, conditioning):
         scores = torch.matmul(conditioning, self.query)
-        weights = torch.softmax(scores, dim = 0)
-        pooled = torch.sum(conditioning * weights.unsqueeze(-1), dim =0)
+        weights = torch.softmax(scores, dim=0)
+        pooled = torch.sum(conditioning * weights.unsqueeze(-1), dim=0)
         return pooled
 
     def forward(self, conditioning):
@@ -78,4 +77,3 @@ class HyperNetwork(nn.Module):
                 b = None
             params.append((W, b))
         return params
-    
