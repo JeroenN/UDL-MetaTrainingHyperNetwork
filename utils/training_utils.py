@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from dataset_loading import Dataset
-from utils import train_vae
+
+from .vae_utils import train_vae
 
 
 def plot_kl(kl_history, save_path=None):
