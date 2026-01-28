@@ -17,7 +17,7 @@ from utils import VAE, TargetNet, HyperNetwork, get_gaussian_from_vae, train_vae
 from dataset_loading import get_dataset, Dataset
 
 from torch.func import functional_call, grad
-
+import time
 try:
     torch.backends.nnpack.enabled = False
 except AttributeError:
@@ -25,8 +25,10 @@ except AttributeError:
 
 train_dataset_names = ["kmnist", "fashion_mnist"]#, "math_shapes", "hebrew_chars"]
 test_dataset_name = "mnist"
-models_folder = Path(__file__).parent / "models"
-
+models_folder = Path(__file__).parent / "models / vaes"
+timestamp = int(time.time())
+experiment_folder = Path(__file__).parent / "experiments" / f"meta_contrastive_experiment_{timestamp}"
+experiment_folder.mkdir(parents=True, exist_ok=True)
 device = torch.device("cuda")
 
 num_workers = 2 if device.type == "cuda" else 0
@@ -54,7 +56,7 @@ lr_vae = float(CFG["training"]["lr_vae"])
 lr_inner = float(CFG["training"]["lr_inner"])
 weight_inner_loss = CFG["training"]["weight_innerloss"]
 log_interval = CFG["training"]["log_interval"]
-save_path = CFG["training"]["save_path"]
+save_path = experiment_folder / "hyper_model.pth"
 steps_innerloop = CFG["meta"]["steps_innerloop"]
 steps_outerloop = CFG["meta"]["steps_outerloop"]
 image_width_height = CFG["data"]["image_width_height"]
@@ -218,7 +220,6 @@ def unflatten_params(flat_params, template_params):
 def plot_losses_and_accuracies(inner_losses_dict,
                                outer_losses_dict,
                                average_acc_diff):
-    Path(Path(__file__).parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
     plt.figure()
     for dataset_name in inner_losses_dict:
         plt.plot(
@@ -236,7 +237,7 @@ def plot_losses_and_accuracies(inner_losses_dict,
     plt.title("Losses per Dataset")
     plt.legend()
     plt.grid(True)
-    plt.savefig(Path(__file__).parent / "visualization" / "plots" / "loss.png")
+    plt.savefig(experiment_folder / "loss.png")
     plt.close()
 
     if len(average_acc_diff) > 0:
@@ -248,7 +249,7 @@ def plot_losses_and_accuracies(inner_losses_dict,
         plt.title("Accuracies averaged")
         plt.legend()
         plt.grid(True)
-        plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
+        plt.savefig(experiment_folder / "accuracy_difference.png")
         plt.close()
 
 # Basically clustering algorithm, find the neurons that correspond to the classes
@@ -473,7 +474,7 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
                 }
                 torch.save(
                     target_embeddings_over_time,
-                    Path(__file__).parent / "notebooks" / "target_embeddings_over_time.pt"
+                    experiment_folder / f"{epoch}_embeddings.pth"
                 )
 
         acc_no_training, acc_training = evaluate_classification(hyper, target, resources, distributions_targets, mu_max_dist)

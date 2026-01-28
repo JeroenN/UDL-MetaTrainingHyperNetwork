@@ -142,6 +142,6 @@ def train_vae(
             file_name = name + vae_description + ".pth"
             models_folder.mkdir(parents=True, exist_ok=True)
             torch.save(
-                {"hyper_state_dict": vae.state_dict()}, models_folder / file_name
+                {"hyper_state_dict": vae.state_dict()}, models_folder / f"{epochs}_epochs" / file_name
             )
     return vae
