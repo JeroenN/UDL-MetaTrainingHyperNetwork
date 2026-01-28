@@ -185,6 +185,6 @@ def train_vae(
             save_dir = models_folder / f"{epochs}_epochs"
             save_dir.mkdir(parents=True, exist_ok=True)
             torch.save(
-                {"hyper_state_dict": vae.state_dict()}, models_folder / file_name
+                {"hyper_state_dict": vae.state_dict()}, save_dir / file_name
             )
     return vae, kl_history
