@@ -228,3 +228,4 @@ run.txt
 inspect.py
 notebooks/target_embeddings_over_time.pt
 experiments/
+logs/

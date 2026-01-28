@@ -127,6 +127,8 @@ def train_vae(
     optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
     mu = []
     logvar = []
+    kl_history = []
+
     for epoch in range(1, epochs + 1):
         vae.train()
         running_loss = 0.0
@@ -144,6 +146,13 @@ def train_vae(
             loss.backward()
             optimizer.step()
 
+            # Add KL divergence to history
+            with torch.no_grad():
+                kl_term = 0.5 * (
+                    mu.pow(2) + logvar.exp() - 1.0 - logvar
+                ).sum(dim=1).mean()
+                kl_history.append(kl_term.item())
+
             # Normalize loss per pixel
             batch_size = x.size(0)
             pixels = x[0].numel()
@@ -157,7 +166,9 @@ def train_vae(
                 beta_end=beta_end)
             file_name = name + vae_description + ".pth"
             models_folder.mkdir(parents=True, exist_ok=True)
+            models_epochs_folder = models_folder / f"{epochs}_epochs"
+            models_epochs_folder.mkdir(parents=True, exist_ok=True)
             torch.save(
-                {"hyper_state_dict": vae.state_dict()}, models_folder / f"{epochs}_epochs" / file_name
+                {"hyper_state_dict": vae.state_dict()}, models_epochs_folder / file_name
             )
-    return vae
+    return vae, kl_history
