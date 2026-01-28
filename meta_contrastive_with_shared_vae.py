@@ -29,7 +29,8 @@ try:
 except AttributeError:
     pass
 
-TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist"]
+#TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist"]
+TRAIN_DATASET_NAMES = ["kmnist", "fashion_mnist"]
 TEST_DATASET_NAME = ["mnist"]
 
 models_folder = Path(__file__).parent / "models"

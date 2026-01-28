@@ -26,10 +26,10 @@ data:
   num_classes: 4
 
 vae:
-  vae_head_dim: 20
+  vae_head_dim: 32
   n_samples_conditioning: 100
   retrain_vae: false
-  vae_description: "_head_20"
+  vae_description: "_head_32"
   shared_vae: true
   beta_start: 0.1
   beta_end: 1.0

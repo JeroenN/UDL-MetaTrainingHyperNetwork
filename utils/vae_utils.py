@@ -50,7 +50,8 @@ def loss_mse_only(recon_x, x, mu, logvar):
     return MSE
 
 
-def evaluate_vae(vae, test_loader, epoch):
+def evaluate_vae(vae, test_loader, epoch,
+                 total_epochs, beta_start, beta_end):
     vae.eval()
 
     running_loss = 0.0
@@ -64,7 +65,9 @@ def evaluate_vae(vae, test_loader, epoch):
             reconstruct, mu, logvar = vae(x)
             list_mu.append(mu.cpu())
             list_logvar.append(logvar.cpu())
-            loss = loss_function(reconstruct, x, mu, logvar)
+            loss = loss_function(reconstruct, x, mu, logvar,
+                epoch=epoch, total_epochs=1,
+                beta_start=0.0, beta_end=1.0)
 
             # Normalize loss per pixel
             batch_size = x.size(0)
@@ -148,7 +151,10 @@ def train_vae(
 
         print(f"VAE: Epoch {epoch} loss_per_pixel={running_loss/len(train_loader):.4f}")
         if epoch % log_interval == 0:
-            evaluate_vae(vae, test_loader, epoch)
+            evaluate_vae(vae, test_loader, epoch, 
+                total_epochs=epochs,
+                beta_start=beta_start,
+                beta_end=beta_end)
             file_name = name + vae_description + ".pth"
             models_folder.mkdir(parents=True, exist_ok=True)
             torch.save(
