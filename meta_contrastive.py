@@ -25,7 +25,7 @@ except AttributeError:
 
 train_dataset_names = ["kmnist", "fashion_mnist"]#, "math_shapes", "hebrew_chars"]
 test_dataset_name = "mnist"
-models_folder = Path(__file__).parent / "models / vaes"
+models_folder = Path(__file__).parent / "models" / "vaes"
 timestamp = int(time.time())
 experiment_folder = Path(__file__).parent / "experiments" / f"meta_contrastive_experiment_{timestamp}"
 experiment_folder.mkdir(parents=True, exist_ok=True)
@@ -472,9 +472,12 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
                     "embeddings": emb,
                     "labels": ref_labels.clone(),
                 }
+            
+                embedding_path = experiment_folder / f"{epochs_hyper}_embeddings.pth"
+                embedding_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(
                     target_embeddings_over_time,
-                    experiment_folder / f"{epoch}_embeddings.pth"
+                    embedding_path
                 )
 
         acc_no_training, acc_training = evaluate_classification(hyper, target, resources, distributions_targets, mu_max_dist)
