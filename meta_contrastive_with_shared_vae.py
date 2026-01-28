@@ -1,29 +1,29 @@
-import random
-from collections import defaultdict
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
-from scipy.optimize import linear_sum_assignment
-from torch.func import functional_call, grad
 from torch.utils.data import DataLoader
+from pathlib import Path
+import random
+import numpy as np
+import yaml
+from typing import Union, Dict, List, Optional, Tuple, Any, Callable
 from tqdm import tqdm
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from scipy.optimize import linear_sum_assignment
 
-from dataset_loading import Dataset, get_dataset
 from utils import (
     VAE,
-    HyperNetwork,
     TargetNet,
-    compute_geometry_consistency_loss,
+    HyperNetwork,
     get_gaussian_from_vae,
-    plot_kl,
     train_shared_vae,
     train_vae_for_dataset,
+    plot_kl,
 )
+from utils import compute_geometry_consistency_loss
+from dataset_loading import get_dataset, Dataset
+
+from torch.func import functional_call, grad
 
 try:
     torch.backends.nnpack.enabled = False
@@ -86,6 +86,7 @@ hidden_layers = CFG["target_net"]["hidden_layers"]
 output_head = CFG["target_net"]["output_head"]
 beta_start = CFG["vae"]["beta_start"]
 beta_end = CFG["vae"]["beta_end"]
+print_grads = CFG["troubleshoot"]["print_grads"]
 
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
@@ -500,6 +501,7 @@ def meta_training(
     train_dataset_names,
     test_dataset_name,
     resources: ResourceManager,
+    print_grads: bool = False,
 ):
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_outer)
 
@@ -586,11 +588,12 @@ def meta_training(
         outer_loss.backward()
 
         ## Print gradients
-        for name, p in hyper.named_parameters():
-            if p.grad is not None:
-                print(
-                    f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}"
-                )
+        if print_grads:
+            for name, p in hyper.named_parameters():
+                if p.grad is not None:
+                    print(
+                        f"{name}: grad mean={p.grad.mean():.4e}, max={p.grad.abs().max():.4e}"
+                    )
 
         optimizer.step()
 
@@ -704,7 +707,9 @@ def main():
     # Get list of training subset names for meta-training
     train_subset_names = list(resources.train_datasets.keys())
 
-    meta_training(hyper, target, train_subset_names, test_dataset_for_eval, resources)
+    meta_training(
+        hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads
+    )
 
 
 if __name__ == "__main__":
