@@ -4,11 +4,12 @@ import torch.nn.functional as F
 
 
 class TargetNet:
+    """A simple feedforward neural network that takes parameters as input."""
 
     def __init__(self, layer_sizes, activation=F.relu):
-        self.layer_sizes = layer_sizes
-        self.activation = activation
-        self.num_layers = len(layer_sizes) - 1
+        self.layer_sizes: list[int] = layer_sizes
+        self.activation: callable = activation
+        self.num_layers: int = len(layer_sizes) - 1
 
     def forward(self, x, params):
         assert len(params) == self.num_layers
@@ -21,18 +22,20 @@ class TargetNet:
 
 
 class HyperNetwork(nn.Module):
+    """Hypernetwork that generates the parameters of a target network based on conditioning input."""
+
     def __init__(
         self,
-        layer_sizes,
-        condition_dim=10,
-        head_hidden=256,
-        use_bias=True,
+        layer_sizes: list[int],
+        condition_dim: int = 10,
+        head_hidden: int = 256,
+        use_bias: bool = True,
     ):
         super().__init__()
-        self.layer_sizes = layer_sizes
-        self.num_layers = len(layer_sizes) - 1
-        self.condition_dim = condition_dim
-        self.use_bias = use_bias
+        self.layer_sizes: list[int] = layer_sizes
+        self.num_layers: int = len(layer_sizes) - 1
+        self.condition_dim: int = condition_dim
+        self.use_bias: bool = use_bias
 
         self.heads = nn.ModuleList()
         self.query = nn.Parameter(torch.randn(condition_dim))
@@ -51,7 +54,12 @@ class HyperNetwork(nn.Module):
             nn.init.constant_(head[-1].bias, 0.0)
             self.heads.append(head)
 
-    def attention_pool(self, conditioning):
+    def attention_pool(self, conditioning: torch.Tensor) -> torch.Tensor:
+        """
+        Applies attention-based pooling over the conditioning inputs.
+        :param conditioning: Tensor of shape (N, condition_dim)
+        :return: Pooled tensor of shape (condition_dim,)
+        """
         scores = torch.matmul(conditioning, self.query)
         weights = torch.softmax(scores, dim=0)
         pooled = torch.sum(conditioning * weights.unsqueeze(-1), dim=0)

@@ -8,9 +8,6 @@ from matplotlib import pyplot as plt
 from PIL import Image
 from torchvision import transforms
 
-# import fiftyone as fo
-# from fiftyone.utils.huggingface import load_from_hub
-
 _to_tensor = transforms.ToTensor()
 
 
@@ -79,8 +76,8 @@ def preprocess_image(
             # average across channels
             x = x.mean(dim=0, keepdim=True)  # (1, H, W)
 
-        # Resize to a 28x28 MNIST-like vector
-        x = transforms.Resize((resize, resize))(x)  # _resize_28(x)
+        # Resize to a NxN vector
+        x = transforms.Resize((resize, resize))(x)
 
     else:
         raise TypeError(f"Unsupported image type: {type(img)}")
@@ -111,6 +108,7 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
             for im in imgs
         ]
 
+        # Convert to tensors if needed
         if to_tensor:
             x = torch.stack(xs)  # (B, 784) or (B, 1, 28, 28)
             y = torch.tensor(labels, dtype=torch.long)
@@ -121,7 +119,14 @@ def _hf_batch_transform(to_tensor: bool = True, flatten: bool = True, resize: in
     return transform
 
 
-def split_dataset_by_classes(dataset, class_limit):
+def split_dataset_by_classes(dataset: dict, class_limit: int) -> list:
+    """
+    Splits a dataset into multiple datasets, each containing at most `class_limit` classes.
+
+    :param dataset: The original dataset to split.
+    :param class_limit: Maximum number of classes per split.
+    :return: A list of datasets.
+    """
     max_label = max(dataset["train"]["label"])
     num_classes = max_label + 1
 
@@ -149,7 +154,7 @@ def get_dataset(
     flatten: bool = True,
     resize: int = 28,
     class_limit: int = None,
-):
+) -> list:
     """
     Returns a dataset function based on the dataset name.
 
@@ -229,7 +234,7 @@ def print_dataset_info(name: str, ds, split: str = "train"):
     :param ds: The dataset object.
     :param split: Which split to use ('train', 'test', etc.).
     """
-    print(f"\n========== {name} ==========")
+    print(f"\n----- {name} -----")
     print(ds)
 
     if hasattr(ds, "keys"):
