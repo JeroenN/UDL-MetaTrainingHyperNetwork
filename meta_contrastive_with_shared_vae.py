@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import yaml
 from scipy.optimize import linear_sum_assignment
 from torch.func import functional_call, grad
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
 from dataset_loading import Dataset, get_dataset
@@ -88,6 +88,10 @@ beta_start = CFG["vae"]["beta_start"]
 beta_end = CFG["vae"]["beta_end"]
 print_grads = CFG["troubleshoot"]["print_grads"]
 
+ablation_mode = CFG["ablation"]["mode"]
+ablation_noise_std = float(CFG.get("ablation", {}).get("noise_std", 1.0))
+use_combined_loader = CFG["data"].get("use_combined_loader", False)
+
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
 target_layer_sizes = [input_dim, *hidden_layers, output_head]
@@ -95,8 +99,35 @@ target_layer_sizes = [input_dim, *hidden_layers, output_head]
 print("Loaded config:", Path(__file__).parent / "config.yaml")
 print("target_layer_sizes =", target_layer_sizes)
 print("condition_dim =", condition_dim)
+print("use_combined_loader =", use_combined_loader)
+print("ablation_mode =", ablation_mode)
 
 n_samples_conditioning = batch_size_innerloop
+
+
+class CombinedDataset(torch.utils.data.Dataset):
+    """Dataset that combines multiple datasets and tracks which dataset each sample came from."""
+    def __init__(self, datasets_with_names: List[Tuple[torch.utils.data.Dataset, str]]):
+        self.datasets = []
+        self.dataset_names = []
+        self.cumulative_sizes = [0]
+        
+        for dataset, name in datasets_with_names:
+            self.datasets.append(dataset)
+            self.dataset_names.append(name)
+            self.cumulative_sizes.append(self.cumulative_sizes[-1] + len(dataset))
+    
+    def __len__(self):
+        return self.cumulative_sizes[-1]
+    
+    def __getitem__(self, idx):
+        # Find which dataset this index belongs to
+        for i, (start, end) in enumerate(zip(self.cumulative_sizes[:-1], self.cumulative_sizes[1:])):
+            if start <= idx < end:
+                local_idx = idx - start
+                X, y = self.datasets[i][local_idx]
+                return X, y, self.dataset_names[i]
+        raise IndexError(f"Index {idx} out of range")
 
 
 class ResourceManager:
@@ -140,6 +171,10 @@ class ResourceManager:
             self.test_datasets.keys()
         ):
             self.set_vae_data_distributions(dataset_name)
+
+        # Setup combined loader if enabled
+        if use_combined_loader:
+            self._setup_combined_loader()
 
     def process_dataset(self, dataset_name, is_train=True):
         """Helper to process a dataset (training or test) and create loaders"""
@@ -308,6 +343,11 @@ class ResourceManager:
         with torch.no_grad():
             for X, y in loader:
                 X = X.to(device)
+                
+                if ablation_mode == "pixel_noise":
+                    X = torch.randn_like(X) * ablation_noise_std
+                    X = torch.clamp(X, 0.0, 1.0)
+
                 mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
                 mus.append(mu)
                 logvars.append(logvar)
@@ -316,6 +356,77 @@ class ResourceManager:
         logvar = torch.concat(logvars, dim=0)
         distribution = torch.concat((mu, logvar), dim=1)
         self.vae_distributions[dataset_name] = distribution
+
+    def _setup_combined_loader(self):
+        """Setup combined loader from all training datasets."""
+        all_train_datasets = []
+        for subset_name, subset in self.train_datasets.items():
+            dataset = Dataset(subset["train"])
+            all_train_datasets.append((dataset, subset_name))
+        
+        if all_train_datasets:
+            combined_dataset = CombinedDataset(all_train_datasets)
+            self.combined_loader = DataLoader(
+                combined_dataset,
+                batch_size=batch_size_innerloop,
+                shuffle=True,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+            self.combined_iter = iter(self.combined_loader)
+            print(f"Created combined loader with {len(combined_dataset)} samples from {len(all_train_datasets)} datasets")
+            
+            # Create combined VAE distribution
+            self._create_combined_vae_distribution()
+
+    def _create_combined_vae_distribution(self):
+        """Create a combined VAE distribution from all training datasets."""
+        all_distributions = []
+        for name in self.train_datasets.keys():
+            if name in self.vae_distributions:
+                all_distributions.append(self.vae_distributions[name])
+        
+        if all_distributions:
+            self.combined_vae_distribution = torch.cat(all_distributions, dim=0)
+            print(f"Created combined VAE distribution with {self.combined_vae_distribution.size(0)} samples")
+        else:
+            self.combined_vae_distribution = None
+
+    def get_combined_batch(self):
+        """Get a batch from the combined shuffled dataset."""
+        try:
+            X, y, dataset_names = next(self.combined_iter)
+        except StopIteration:
+            self.combined_iter = iter(self.combined_loader)
+            X, y, dataset_names = next(self.combined_iter)
+
+        X = X.to(device)
+        y = y.to(device)
+
+        # Remap labels to 0..num_unique-1
+        unique_labels = torch.unique(y)
+        label_map = {lab.item(): i for i, lab in enumerate(unique_labels)}
+        y = torch.tensor([label_map[int(lab)] for lab in y], device=y.device)
+
+        # Encode each sample with its corresponding VAE
+        mus = []
+        logvars = []
+        with torch.no_grad():
+            for i, name in enumerate(dataset_names):
+                vae = self.get_vae(name)
+                sample = X[i:i+1]
+                mu, logvar = get_gaussian_from_vae(vae, sample, 0, visualize=False)
+                mus.append(mu)
+                logvars.append(logvar)
+        
+        mu = torch.cat(mus, dim=0).to(device)
+        logvar = torch.cat(logvars, dim=0).to(device)
+        
+        return X, y, mu, logvar
+
+    def get_combined_vae_distribution(self):
+        """Get the combined VAE distribution for conditioning."""
+        return self.combined_vae_distribution
 
 
 def flatten_params(params):
@@ -528,16 +639,22 @@ def meta_training(
         params_hyper = dict(hyper.named_parameters())
         buffers_hyper = dict(hyper.named_buffers())
 
-        # Select a random training subset
-        train_subset_names = list(resources.train_datasets.keys())
-        dataset_name = random.choice(train_subset_names)
-
-        vae_dist_inner = resources.get_vae_data_distribution(dataset_name)
+        if use_combined_loader:
+            vae_dist_inner = resources.get_combined_vae_distribution()
+            dataset_name = "combined"
+        else:
+            # Select a random training subset
+            train_subset_names = list(resources.train_datasets.keys())
+            dataset_name = random.choice(train_subset_names)
+            vae_dist_inner = resources.get_vae_data_distribution(dataset_name)
 
         adapted_params_hyper = {k: v.clone() for k, v in params_hyper.items()}
         # Innerloop
         for _ in range(steps_innerloop):
-            inner_X, _, inner_mu, inner_logvar = resources.get_batch(dataset_name)
+            if use_combined_loader:
+                inner_X, _, inner_mu, inner_logvar = resources.get_combined_batch()
+            else:
+                inner_X, _, inner_mu, inner_logvar = resources.get_batch(dataset_name)
             dist_inner = vae_dist_inner[torch.randperm(vae_dist_inner.size(0))[:1024]]
             inner_distribution_input = torch.concat((inner_mu, inner_logvar), dim=1)
 
@@ -569,7 +686,10 @@ def meta_training(
 
         # Outerloop
         dist_outer = vae_dist_inner[torch.randperm(vae_dist_inner.size(0))[:1024]]
-        X_outer, y_outer, mu_outer, logvar_outer = resources.get_batch(dataset_name)
+        if use_combined_loader:
+            X_outer, y_outer, mu_outer, logvar_outer = resources.get_combined_batch()
+        else:
+            X_outer, y_outer, mu_outer, logvar_outer = resources.get_batch(dataset_name)
         outer_distribution_input = torch.concat((mu_outer, logvar_outer), dim=1)
 
         params_target_outer = functional_call(
