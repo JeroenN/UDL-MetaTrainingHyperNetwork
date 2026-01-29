@@ -293,8 +293,8 @@ class ResourceManager:
         """Helper to train or load VAE for a specific dataset subset"""
         vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(device)
         file_name = dataset_name + vae_description + ".pth"
-        path = self.model_folder / file_name
-
+        path = self.model_folder / file_name 
+        kl_history = None
         if path.exists():
             vae.load_state_dict(
                 torch.load(path, map_location=device)["hyper_state_dict"]
