@@ -14,8 +14,8 @@ DECODER_STRIDE = 2
 class ResidualBlock(nn.Module):
     def __init__(
         self,
-        in_channels,
-        out_channels,
+        in_channels: int,
+        out_channels: int,
         kernel_size: int,
         padding: int,
         strides: tuple[int, int] = (1, 1),
@@ -108,6 +108,7 @@ CDim = tuple[int, int, int, int]
 
 
 class VAE(nn.Module):
+    """Variational Autoencoder architecture used on our main training script."""
 
     def __init__(self, w: int, h: int, ls_dim: int, in_channels: int = 3):
         super(VAE, self).__init__()
