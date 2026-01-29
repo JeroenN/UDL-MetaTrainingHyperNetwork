@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Union
 import matplotlib.pyplot as plt
 
+from .training_utils import plot_kl
+
 
 def plot_losses_and_accuracies(
     inner_losses_dict, 
@@ -63,3 +65,42 @@ def plot_losses_and_accuracies(
         plt.grid(True)
         plt.savefig(plots_dir / "accuracy_diff.png")
         plt.close()
+
+
+def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
+    """Plot KL divergence histories from VAE training.
+    
+    Args:
+        histories: Either a dict of {dataset_name: kl_history} for per-dataset VAEs,
+                   or a list for shared VAE
+        out_dir: Directory to save plots
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # In case of per-dataset VAEs
+    if isinstance(histories, dict):
+        plotted = False
+        for name, hist in histories.items():
+            if hist is None or len(hist) == 0:
+                continue
+
+            plot_kl(
+                hist,
+                save_path=out_dir / f"{name}_kl.png",
+            )
+            plotted = True
+
+        if not plotted:
+            print("[KL] No per-dataset KL histories to plot.")
+        return
+
+    # When we have a shared VAE
+    if histories is None or len(histories) == 0:
+        print("[KL] No shared KL history to plot.")
+        return
+
+    plot_kl(
+        histories,
+        save_path=out_dir / "shared_vae_kl.png",
+    )
