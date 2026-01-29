@@ -24,7 +24,7 @@ try:
 except AttributeError:
     pass
 
-train_dataset_names = ["kmnist", "hebrew_chars", "fashion_mnist"]
+train_dataset_names = ["kmnist"]#, "hebrew_chars", "fashion_mnist"]
 test_dataset_name = "mnist"
 models_folder = Path(__file__).parent / "models"
 
@@ -294,6 +294,13 @@ def get_optimal_neuron_permutation(logits, targets, num_classes):
 
     return torch.tensor(perm_indices, device=logits.device)
 
+def get_kmeans_centroids(features, k, iterations):
+    centroids, _ = kmeans(features, k, iter=iterations)
+    return centroids
+
+def get_nearest_centroids(features, centroids):
+    distances = torch.cdist(features, centroids)
+    return torch.argmin(distances, dim=1)
 
 def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager, distributions_targets):
     
@@ -306,6 +313,21 @@ def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager
     correct_base = 0
     total_base = 0
     
+    test_centroids = None
+    if use_cluster_fit_targets:
+        #all_test_mus = []
+        #for mu, _, _ in distributions_targets:
+        #    all_test_mus.append(mu)
+        #all_test_mus = torch.cat(all_test_mus, dim=0).cpu().numpy()
+        #test_centroids = get_kmeans_centroids(all_test_mus, num_classes, 20)
+        #test_centroids = torch.tensor(test_centroids, device=device)
+        #full_distribution = resources.get_vae_data_distribution(dataset_name, idx)
+        all_mus = vae_distribution[:, :vae_head_dim]
+        all_mus_np = all_mus.cpu().numpy()
+        test_centroids = get_kmeans_centroids(all_mus_np, num_classes, 20)
+        test_centroids = torch.tensor(test_centroids, device=device)
+        
+
     with torch.no_grad():
         for mu, logvar, y in distributions_targets:
             y = y.to(device)
@@ -341,9 +363,14 @@ def evaluate_classification(hyper, target: TargetNet, resources: ResourceManager
             
             distribution = torch.concat((mu, logvar), dim=1)
             logits = target.forward(distribution, params_target)
-            target_output = F.normalize(logits, p=2, dim=1)
-
-            loss = compute_geometry_consistency_loss(mu, target_output) 
+            
+            if use_cluster_fit_targets:
+                cluster_targets = get_nearest_centroids(mu, test_centroids)
+                loss = F.cross_entropy(logits, cluster_targets)
+            else:
+                target_output = F.normalize(logits, p=2, dim=1)
+                loss = compute_geometry_consistency_loss(mu, target_output) 
+            
             loss = loss * weight_inner_loss
 
             grads = torch.autograd.grad(loss, current_params_hyper.values(), create_graph=False)
@@ -435,6 +462,8 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
     acc_no_training_list = []
     average_acc_diff = []
 
+    dataset_centroids = {}
+
     for epoch in tqdm(range(epochs_hyper), desc="Epochs"):
         params_hyper = dict(hyper.named_parameters())
         buffers_hyper = dict(hyper.named_buffers())
@@ -443,6 +472,13 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
         idx = np.random.randint(0, len(resources.get_loader(dataset_name)))
         vae_dist_inner = resources.get_vae_data_distribution(dataset_name, idx)
         
+        if use_cluster_fit_targets and dataset_name not in dataset_centroids:
+            full_distribution = resources.get_vae_data_distribution(dataset_name, idx)
+            all_mus = full_distribution[:, :vae_head_dim]
+            all_mus_np = all_mus.cpu().numpy()
+            centroids = get_kmeans_centroids(all_mus_np, num_classes, 20)
+            dataset_centroids[dataset_name] = torch.tensor(centroids, device=device)
+
         adapted_params_hyper = {k: v.clone() for k, v in params_hyper.items()}
         # Innerloop
         for _ in range(steps_innerloop):
@@ -454,9 +490,14 @@ def meta_training(hyper: HyperNetwork, target: TargetNet, resources: ResourceMan
             
             target_logits = target.forward(inner_distribution_input, params_target_inner)
             
-            target_output = F.normalize(target_logits, p=2, dim=1)
-            
-            inner_loss = compute_geometry_consistency_loss(inner_mu, target_output)
+            if use_cluster_fit_targets:
+                centroids = dataset_centroids[dataset_name]
+                cluster_targets = get_nearest_centroids(inner_mu, centroids)
+                inner_loss = F.cross_entropy(target_logits, cluster_targets)
+            else:
+                target_output = F.normalize(target_logits, p=2, dim=1)
+                inner_loss = compute_geometry_consistency_loss(inner_mu, target_output)
+
             inner_loss = inner_loss * weight_inner_loss
             grads = torch.autograd.grad(
                 inner_loss,
