@@ -7,7 +7,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def ssim_loss(img1, img2, window_size=11, reduction="mean"):
+def ssim_loss(
+    img1: torch.Tensor,
+    img2: torch.Tensor,
+    window_size: int = 11,
+    reduction: str = "mean",
+):
+    """
+    Compute Structural Similarity Index (SSIM) loss between two images.
+
+    :param img1: First image tensor.
+    :param img2: Second image tensor.
+    :param window_size: Size of the sliding window.
+    :param reduction: Reduction method ('mean' or 'none').
+    :return: SSIM loss value.
+    """
     mu1 = F.avg_pool2d(img1, window_size, stride=1, padding=0)
     mu2 = F.avg_pool2d(img2, window_size, stride=1, padding=0)
     mu1_sq, mu2_sq, mu1_mu2 = mu1**2, mu2**2, mu1 * mu2
@@ -27,6 +41,7 @@ def ssim_loss(img1, img2, window_size=11, reduction="mean"):
 def loss_function(
     recon_x, x, mu, logvar, epoch, total_epochs, beta_start=0.0, beta_end=1.0
 ):
+    """Compute VAE loss which includes MSE, SSIM, and KL divergence with beta annealing."""
 
     MSE = F.mse_loss(recon_x, x, reduction="sum")
 
@@ -52,18 +67,24 @@ def loss_mse_only(recon_x, x, mu, logvar):
 
 
 def evaluate_vae(
-    vae, 
-    test_loader, 
-    epoch, 
-    total_epochs, 
-    beta_start, 
+    vae,
+    test_loader,
+    epoch,
+    total_epochs,
+    beta_start,
     beta_end,
-    output_dir: Optional[Union[str, Path]] = None
+    output_dir: Optional[Union[str, Path]] = None,
 ):
-    """Evaluate VAE and optionally save visualizations.
-    
-    Args:
-        output_dir: Directory to save visualizations. If None, no visualizations are saved.
+    """
+    Evaluate VAE and optionally save visualizations.
+
+    :param vae: VAE model to evaluate
+    :param test_loader: DataLoader for the test dataset
+    :param epoch: Current epoch number
+    :param total_epochs: Total number of epochs
+    :param beta_start: Starting beta value for KL annealing
+    :param beta_end: Ending beta value for KL annealing
+    :param output_dir: Directory to save visualizations during evaluation.
     """
     vae.eval()
 
@@ -72,12 +93,12 @@ def evaluate_vae(
     list_logvar = []
     max_visualize = 5
     device = next(vae.parameters()).device
-    
+
     if output_dir is not None:
         output_dir = Path(output_dir)
         vis_dir = output_dir / "visualizations"
         vis_dir.mkdir(parents=True, exist_ok=True)
-    
+
     with torch.no_grad():
         for batch_idx, (x, _) in enumerate(test_loader):
             x = x.to(device, dtype=torch.float32)
@@ -104,7 +125,9 @@ def evaluate_vae(
                 img, ax = plt.subplots(2, 2)
                 ax[0, 0].imshow(x[0].squeeze().to("cpu"))
                 ax[0, 1].imshow(reconstruct[0].squeeze().detach().cpu())
-                file_path = vis_dir / f"evaluation_batch_idx_{batch_idx}_epoch_{epoch}.png"
+                file_path = (
+                    vis_dir / f"evaluation_batch_idx_{batch_idx}_epoch_{epoch}.png"
+                )
                 img.savefig(file_path)
                 plt.close(img)
 
@@ -113,16 +136,17 @@ def evaluate_vae(
 
 
 def get_gaussian_from_vae(
-    vae, 
-    x, 
-    idx, 
-    visualize: bool = False,
-    output_dir: Optional[Union[str, Path]] = None
+    vae, x, idx, visualize: bool = False, output_dir: Optional[Union[str, Path]] = None
 ):
-    """Get Gaussian parameters from VAE encoding.
-    
-    Args:
-        output_dir: Directory to save visualizations if visualize=True.
+    """
+    Get Gaussian parameters from VAE encoding.
+
+    :param vae: VAE model
+    :param x: Input tensor
+    :param idx: Index for visualization file naming
+    :param visualize: Whether to save visualization of reconstructions
+    :param output_dir: Directory to save visualizations
+    :return: mu and logvar tensors
     """
     vae.eval()
     device = next(vae.parameters()).device
@@ -135,7 +159,7 @@ def get_gaussian_from_vae(
         output_dir = Path(output_dir)
         vis_dir = output_dir / "visualizations"
         vis_dir.mkdir(parents=True, exist_ok=True)
-        
+
         img, ax = plt.subplots(2, 2)
         ax[0, 0].imshow(x[0].squeeze().to("cpu"))
         ax[0, 1].imshow(reconstruct[0].squeeze().detach().cpu())
@@ -160,10 +184,22 @@ def train_vae(
     beta_end=1.0,
     output_dir: Optional[Union[str, Path]] = None,
 ):
-    """Train VAE model.
-    
-    Args:
-        output_dir: Directory to save visualizations during evaluation.
+    """
+    Train VAE model, evaluate it, save the model, and also return KL divergence history.
+
+    :param vae: VAE model to train
+    :param train_loader: DataLoader for training data
+    :param test_loader: DataLoader for testing data
+    :param name: Name prefix for saving the model
+    :param lr: Learning rate
+    :param epochs: Number of training epochs
+    :param log_interval: Interval for logging and evaluation
+    :param vae_description: Description suffix for saving the model
+    :param models_folder: Folder to save trained models
+    :param beta_start: Starting beta value for KL annealing
+    :param beta_end: Ending beta value for KL annealing
+    :param output_dir: Directory to save visualizations during evaluation.
+    :return: Trained VAE model and KL divergence history.
     """
     optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
     mu = []
@@ -217,8 +253,8 @@ def train_vae(
                 output_dir=output_dir,
             )
             file_name = name + vae_description + ".pth"
-            #save_dir = models_folder / f"{epochs}_epochs"
-            #save_dir.mkdir(parents=True, exist_ok=True)
+            # save_dir = models_folder / f"{epochs}_epochs"
+            # save_dir.mkdir(parents=True, exist_ok=True)
             torch.save(
                 {"hyper_state_dict": vae.state_dict()}, models_folder / file_name
             )
