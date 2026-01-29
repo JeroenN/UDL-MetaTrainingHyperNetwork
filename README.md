@@ -1,5 +1,11 @@
 # UDL-MetaTrainingHyperNetwork
 
+## Goal of project:
+This project took inspiration from two papers:
+1. HyperFast: Instant Classification for Tabular Data
+In this paper the authors meta-train a hypernetwork to be able to generate a target network that can perform tabular classification with no further training. This does require the dataset to be fully labeled.
+
+
 ### Install dependencies
 
 ```bash
