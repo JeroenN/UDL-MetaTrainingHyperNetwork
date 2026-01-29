@@ -13,7 +13,7 @@ In this paper the authors meta-train a network to be able to do zero-shot classi
 ### Our approach
 We created a way, using meta-learning, for the hypernetwork to apply an unsupervised update during inference in order to increase its classification accuracy. Instead of conditioning our hypernetwork on data that PCA was applied to, we condition the hypernetwork on the VAE distribution produced by the samples of the dataset. The reason for not using PCA because in the approach by hyperfast they assume that you have a labeled dataset, we do not. 
 
-We took inspiration from MT3 by applying within the innerloop a way to learn usefull features for classifictation. The difference between our approach is that it also alligns better with the outerloop task of classifying these images.
+We took inspiration from MT3 by applying within the innerloop a way to learn usefull features for classifictation. The difference between our approach is that it also alligns better with the outerloop task of classifying these images. 
 
 ## Setup & How to Use
 
@@ -105,6 +105,7 @@ This project uses several image classification datasets loaded with the `dataset
 
 
 
-
+# Use of LLMs
+LLMs we used for brain-storming, finding usefull papers and for providing psuedo-code.
 
 ![alt text](https://github.com/JeroenN/UDL-MetaTrainingHyperNetwork/blob/main/initial_results.jpeg)
