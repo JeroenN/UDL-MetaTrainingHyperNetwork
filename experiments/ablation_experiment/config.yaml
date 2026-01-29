@@ -1,0 +1,64 @@
+training:
+  batch_size_outerloop: 16
+  batch_size_innerloop: 16
+  batch_size_vae: 512
+
+  #epochs_hyper: 4000
+  #epochs_vae: 100
+
+  epochs_hyper: 130
+  epochs_vae: 10
+
+  lr_outer: 1e-5
+  lr_vae: 1e-4
+  lr_inner: 5e-3
+
+  weight_innerloss: 3
+
+  log_interval: 1
+  save_path: "hypernet_checkpoint.pth"
+
+meta:
+  steps_innerloop: 3
+  iterations_evaluation: 10
+
+data:
+  image_width_height: 28
+  num_classes: 4
+  use_combined_loader: false  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
+
+vae:
+  vae_head_dim: 128
+  n_samples_conditioning: 100
+  vae_description: "_head_128"
+  shared_vae: false
+  beta_start: 0.25
+  beta_end: 1.0
+
+model:
+  cluster_using_guassians: true
+  use_contrastive_loss: true
+  contrastive_temp: 0.07
+
+hypernet:
+  head_hidden: 256
+  use_bias: true
+
+target_net:
+  # If cluster_using_guassians=true, input_dim is 2*vae_head_dim (mu + logvar)
+  # Else, input_dim is image_width_height^2 (flattened image)
+  hidden_layers: [400, 200]
+  output_head: 4
+
+ablation:
+  mode: "pixel_noise"
+  noise_std: 0.5
+
+troubleshoot:
+  print_grads: false
+
+experiment:
+  run_n_times: 20
+  name: "ablation_experiment"  # experiment folder name, or "auto" for timestamp-based naming
+  save_embeddings_interval: 10  # save embeddings every N epochs (0 to disable)
+
