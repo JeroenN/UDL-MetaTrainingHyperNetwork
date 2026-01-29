@@ -108,6 +108,12 @@ embeddings_folder = experiments_folder / "embeddings"
 for folder in [models_folder, plots_folder, visualizations_folder, embeddings_folder]:
     folder.mkdir(parents=True, exist_ok=True)
 
+# Save a copy of the config used for this experiment
+import shutil
+config_source = Path(__file__).parent / "config.yaml"
+config_dest = experiments_folder / "config.yaml"
+shutil.copy2(config_source, config_dest)
+
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
 target_layer_sizes = [input_dim, *hidden_layers, output_head]
