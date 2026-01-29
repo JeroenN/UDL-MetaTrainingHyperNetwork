@@ -15,27 +15,37 @@ We created a way, using meta-learning, for the hypernetwork to apply an unsuperv
 
 We took inspiration from MT3 by applying within the innerloop a way to learn usefull features for classifictation. The difference between our approach is that it also alligns better with the outerloop task of classifying these images.
 
+## Setup & How to Use
 
-### Install dependencies
+### 1. Install dependencies
+After cloning the repository, install the required packages:
 
 ```bash
 pip intall -r requirements.txt
 ```
+### 2. Configure parameters
+All runtime and training parameters are defined in config.json.
+Adjust this file according to your needs. The current version contains an instance of our current experimental setup.
 
-Also make sure to install torch seperately.
+### 3. Run the main pipeline
 
-### CPU-only
 ```bash
-pip install torch
-```
-### CUDA 11.8
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu118
+python main.py
 ```
 
-### CUDA 12.1
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-```
+#### VAE Checkpoints
+* VAE models are only retrained if no matching checkpoint is found locally.
+* Either store VAE checkpoints in a models/ folder at the repository root or let the script train and store them automatically.
+* Checkpoint follows the following naming convention: 'shared_vae_head_128.pth' : Where 128 matches the VAE description / latent-space dimension specified in config.json
+
+#### Output Visualizations
+Meta-training will produce plots and visualizations saved in the folder 'visualisation/'.
+
+
+
+
+
+
+
 
 ![alt text](https://github.com/JeroenN/UDL-MetaTrainingHyperNetwork/blob/main/initial_results.jpeg)
