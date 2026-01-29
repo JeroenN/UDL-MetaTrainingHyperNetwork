@@ -37,12 +37,6 @@ except AttributeError:
 TRAIN_DATASET_NAMES = ["kmnist", "fashion_mnist"]
 TEST_DATASET_NAME = ["mnist"]
 
-models_folder = Path(__file__).parent / "models"
-visualization_folder = Path(__file__).parent / "visualization"
-# Ensure directories exist
-models_folder.mkdir(parents=True, exist_ok=True)
-visualization_folder.mkdir(parents=True, exist_ok=True)
-
 device = torch.device(
     "cuda"
     if torch.cuda.is_available()
@@ -99,15 +93,42 @@ ablation_mode = CFG["ablation"]["mode"]
 ablation_noise_std = float(CFG.get("ablation", {}).get("noise_std", 1.0))
 use_combined_loader = CFG["data"].get("use_combined_loader", False)
 
+# Experiment configuration
+experiment_name = CFG.get("experiment", {}).get("name", "default")
+save_embeddings_interval = CFG.get("experiment", {}).get("save_embeddings_interval", 10)
+
+# Setup experiment directory structure
+if experiment_name == "auto":
+    from datetime import datetime
+    experiment_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+experiments_folder = Path(__file__).parent / "experiments" / experiment_name
+models_folder = experiments_folder / "models"
+plots_folder = experiments_folder / "plots"
+visualizations_folder = experiments_folder / "visualizations"
+embeddings_folder = experiments_folder / "embeddings"
+
+# Ensure directories exist
+for folder in [models_folder, plots_folder, visualizations_folder, embeddings_folder]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+# Save a copy of the config used for this experiment
+import shutil
+config_source = Path(__file__).parent / "config.yaml"
+config_dest = experiments_folder / "config.yaml"
+shutil.copy2(config_source, config_dest)
+
 condition_dim = vae_head_dim * 2
 input_dim = vae_head_dim * 2 if cluster_using_guassians else image_width_height**2
 target_layer_sizes = [input_dim, *hidden_layers, output_head]
 
 print("Loaded config:", Path(__file__).parent / "config.yaml")
+print("Experiment directory:", experiments_folder)
 print("target_layer_sizes =", target_layer_sizes)
 print("condition_dim =", condition_dim)
 print("use_combined_loader =", use_combined_loader)
 print("ablation_mode =", ablation_mode)
+print("save_embeddings_interval =", save_embeddings_interval)
 
 n_samples_conditioning = batch_size_innerloop
 
@@ -144,11 +165,13 @@ class ResourceManager:
         test_dataset_names,
         model_folder,
         share_vae: bool = False,
+        output_dir: Optional[Union[str, Path]] = None,
     ):
         self.loaders = {}
         self.vaes = {}
         self.iters = {}
         self.model_folder = model_folder
+        self.output_dir = Path(output_dir) if output_dir else None
         self.vae_distributions = {}
         self.train_datasets = {}
         self.test_datasets = {}
@@ -242,6 +265,7 @@ class ResourceManager:
                 models_folder=models_folder,
                 beta_start=beta_start,
                 beta_end=beta_end,
+                output_dir=self.output_dir,
             )
             self.kl_history_shared = kl_history
 
@@ -292,6 +316,7 @@ class ResourceManager:
                 models_folder=models_folder,
                 beta_start=beta_start,
                 beta_end=beta_end,
+                output_dir=self.output_dir,
             )
 
         vae.to(device).eval()
@@ -642,7 +667,14 @@ def meta_training(
     test_dataset_name,
     resources: ResourceManager,
     print_grads: bool = False,
+    output_dir: Optional[Union[str, Path]] = None,
 ):
+    """Meta-training loop for the hypernetwork.
+    
+    Args:
+        output_dir: Directory to save plots and embeddings.
+    """
+    output_dir = Path(output_dir) if output_dir else None
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_outer)
 
     distributions_targets = []
@@ -784,7 +816,46 @@ def meta_training(
                 )
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
-            plotting.plot_losses_and_accuracies(inner_losses, outer_losses, acc_training_list, average_acc_diff, kmeans_acc)
+            if output_dir:
+                plotting.plot_losses_and_accuracies(
+                    inner_losses, outer_losses, acc_training_list, 
+                    average_acc_diff, kmeans_acc, output_dir
+                )
+        
+        # Save embeddings periodically
+        if output_dir and save_embeddings_interval > 0 and (epoch + 1) % save_embeddings_interval == 0:
+            embeddings_dir = output_dir / "embeddings"
+            embeddings_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Collect embeddings from the test dataset
+            all_mu = []
+            all_logvar = []
+            all_logits = []
+            all_labels = []
+            
+            with torch.no_grad():
+                vae_dist = resources.get_vae_data_distribution(test_dataset_name)
+                dist_sample = vae_dist[torch.randperm(vae_dist.size(0))[:1024]]
+                params = hyper(dist_sample)
+                
+                for mu, logvar, y in distributions_targets:
+                    distribution = torch.concat((mu, logvar), dim=1)
+                    logits = target.forward(distribution, params)
+                    
+                    all_mu.append(mu.cpu())
+                    all_logvar.append(logvar.cpu())
+                    all_logits.append(logits.cpu())
+                    all_labels.append(y.cpu())
+            
+            embeddings_data = {
+                "epoch": epoch + 1,
+                "mu": torch.cat(all_mu, dim=0),
+                "logvar": torch.cat(all_logvar, dim=0),
+                "logits": torch.cat(all_logits, dim=0),
+                "labels": torch.cat(all_labels, dim=0),
+            }
+            torch.save(embeddings_data, embeddings_dir / f"epoch_{epoch + 1}.pt")
+            print(f"Saved embeddings at epoch {epoch + 1}")
 
     return inner_losses, outer_losses, acc_training_list, average_acc_diff, kmeans_acc
         
@@ -830,18 +901,17 @@ def main():
         test_dataset_names=TEST_DATASET_NAME,
         model_folder=models_folder,
         share_vae=shared_vae,
+        output_dir=experiments_folder,
     )
 
     if shared_vae:
         plot_kl_histories(
-            resources.kl_history_shared, visualization_folder / "kl_plots"
+            resources.kl_history_shared, experiments_folder / "plots"
         )
     else:
         plot_kl_histories(
-            resources.kl_history_by_dataset, visualization_folder / "kl_plots"
+            resources.kl_history_by_dataset, experiments_folder / "plots"
         )
-
-
 
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
 
@@ -851,8 +921,6 @@ def main():
     )
     train_subset_names = list(resources.train_datasets.keys())
 
-    inner_losses_experiment = []
-    outer_losses_experiment = []
     acc_training_experiment = []
     average_acc_diff_experiment = []
     kmeans_acc_experiment = []
@@ -865,26 +933,18 @@ def main():
         ).to(device)
             
         inner_losses, outer_losses, acc_training, average_acc_diff, kmeans_acc = meta_training(
-            hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads)
+            hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads, output_dir=experiments_folder)
         
-        #inner_losses_experiment.append(inner_losses)
-        #outer_losses_experiment.append(outer_losses)
         acc_training_experiment.append(acc_training)
         average_acc_diff_experiment.append(average_acc_diff)
         kmeans_acc_experiment.append(kmeans_acc)
 
-        #inner_losses_avg = np.mean(np.array(inner_losses_experiment), axis = 0)
-        #outer_losses_avg = np.mean(np.array(outer_losses_experiment), axis=0)
         acc_training_avg = np.mean(np.array(acc_training_experiment), axis=0)
         average_acc_diff_avg = np.mean(np.array(average_acc_diff_experiment), axis=0)
         kmeans_acc_avg = np.mean(np.array(kmeans_acc_experiment), axis=0)
 
-        plotting.plot_losses_and_accuracies(None, None, acc_training_avg, average_acc_diff_avg, kmeans_acc_avg, name_addition= "_average")
+        plotting.plot_losses_and_accuracies(None, None, acc_training_avg, average_acc_diff_avg, kmeans_acc_avg, output_dir= experiments_folder, name_addition= "_average")
 
-
-        
-    
-    
 
 
 

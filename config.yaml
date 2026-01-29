@@ -5,7 +5,8 @@ training:
 
   #epochs_hyper: 4000
   #epochs_vae: 100
-  epochs_hyper: 1500
+
+  epochs_hyper: 130
   epochs_vae: 10
 
   lr_outer: 1e-5
@@ -14,7 +15,7 @@ training:
 
   weight_innerloss: 3
 
-  log_interval: 40
+  log_interval: 8
   save_path: "hypernet_checkpoint.pth"
 
 meta:
@@ -24,12 +25,11 @@ meta:
 data:
   image_width_height: 28
   num_classes: 4
-  use_combined_loader: true  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
+  use_combined_loader: false  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
 
 vae:
   vae_head_dim: 128
   n_samples_conditioning: 100
-  retrain_vae: false
   vae_description: "_head_128"
   shared_vae: true
   beta_start: 0.25
@@ -59,4 +59,6 @@ troubleshoot:
 
 experiment:
   run_n_times: 20
+  name: "default"  # experiment folder name, or "auto" for timestamp-based naming
+  save_embeddings_interval: 10  # save embeddings every N epochs (0 to disable)
 
