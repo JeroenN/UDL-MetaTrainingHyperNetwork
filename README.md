@@ -1,6 +1,6 @@
 # UDL-MetaTrainingHyperNetwork
 
-## Goal of project:
+## Goal of project
 This project took inspiration from two papers:
 ### 1. HyperFast: Instant Classification for Tabular Data
 
@@ -10,7 +10,10 @@ In this paper the authors meta-train a hypernetwork to be able to generate a tar
 
 In this paper the authors meta-train a network to be able to do zero-shot classification on permuted data. Within the outerloop the the meta-network is trained to minimize the cross entropy loss of labeled samples. In the innerloop there are a set number of transformations applied to the images. Each kind of transformation gets its own label. The model is then trained to identify the transformations applied.
 
+### Our approach
+We created a way, using meta-learning, for the hypernetwork to apply an unsupervised update during inference in order to increase its classification accuracy. Instead of conditioning our hypernetwork on data that PCA was applied to, we condition the hypernetwork on the VAE distribution produced by the samples of the dataset. The reason for not using PCA because in the approach by hyperfast they assume that you have a labeled dataset, we do not. 
 
+We took inspiration from MT3 by applying within the innerloop a way to learn usefull features for classifictation. The difference between our approach is that it also alligns better with the outerloop task of classifying these images.
 
 
 ### Install dependencies
