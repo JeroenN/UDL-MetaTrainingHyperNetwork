@@ -5,7 +5,7 @@ training:
 
   #epochs_hyper: 4000
   #epochs_vae: 100
-  epochs_hyper: 2000
+  epochs_hyper: 1500
   epochs_vae: 10
 
   lr_outer: 1e-5
@@ -19,12 +19,12 @@ training:
 
 meta:
   steps_innerloop: 3
-  steps_outerloop: 3
+  iterations_evaluation: 10
 
 data:
   image_width_height: 28
   num_classes: 4
-  use_combined_loader: false  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
+  use_combined_loader: true  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
 
 vae:
   vae_head_dim: 128
@@ -56,4 +56,7 @@ ablation:
 
 troubleshoot:
   print_grads: false
+
+experiment:
+  run_n_times: 20
 

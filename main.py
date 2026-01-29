@@ -61,6 +61,8 @@ def load_config(path: Union[str, Path]) -> dict:
 
 CFG = load_config(Path(__file__).parent / "config.yaml")
 
+run_experiment_n_times = CFG["experiment"]["run_n_times"]
+
 batch_size_outerloop = CFG["training"]["batch_size_outerloop"]
 batch_size_innerloop = CFG["training"]["batch_size_innerloop"]
 batch_size_vae = CFG["training"]["batch_size_vae"]
@@ -72,8 +74,10 @@ lr_inner = float(CFG["training"]["lr_inner"])
 weight_inner_loss = CFG["training"]["weight_innerloss"]
 log_interval = CFG["training"]["log_interval"]
 save_path = CFG["training"]["save_path"]
+
 steps_innerloop = CFG["meta"]["steps_innerloop"]
-steps_outerloop = CFG["meta"]["steps_outerloop"]
+iterations_evaluation = CFG["meta"]["iterations_evaluation"]
+
 image_width_height = CFG["data"]["image_width_height"]
 num_classes = CFG["data"]["num_classes"]
 vae_head_dim = CFG["vae"]["vae_head_dim"]
@@ -564,16 +568,13 @@ def evaluate_classification(
 
     correct_adapted = 0
     total_adapted = 0
+    current_params_hyper = {
+        k: v.clone().detach().requires_grad_(True)
+        for k, v in hyper.named_parameters()
+    } 
 
-    for mu, logvar, y in distributions_targets:
-
-        current_params_hyper = {
-            k: v.clone().detach().requires_grad_(True)
-            for k, v in hyper.named_parameters()
-        }
-
-        for _ in range(steps_innerloop):
-
+    for _ in range(iterations_evaluation):
+        for mu, logvar, y in distributions_targets:
             dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
 
             params_target = functional_call(
@@ -596,22 +597,22 @@ def evaluate_classification(
                 for (name, p), g in zip(current_params_hyper.items(), grads)
             }
 
-        with torch.no_grad():
-            y = y.to(device)
-            dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
-            params_target_adapted = functional_call(
-                hyper, (current_params_hyper, buffers_hyper), (dist_inner,)
-            )
+    with torch.no_grad():
+        y = y.to(device)
+        dist_inner = dist_inner_pool[torch.randperm(dist_inner_pool.size(0))[:1024]]
+        params_target_adapted = functional_call(
+            hyper, (current_params_hyper, buffers_hyper), (dist_inner,)
+        )
 
-            distribution = torch.concat((mu, logvar), dim=1)
-            logits = target.forward(distribution, params_target_adapted)
+        distribution = torch.concat((mu, logvar), dim=1)
+        logits = target.forward(distribution, params_target_adapted)
 
-            perm = get_cluster_assignments(logits, y, num_classes)
-            aligned_logits = logits[:, perm]
+        perm = get_cluster_assignments(logits, y, num_classes)
+        aligned_logits = logits[:, perm]
 
-            preds = torch.argmax(aligned_logits, dim=1)
-            correct_adapted += (preds == y).sum().item()
-            total_adapted += y.size(0)
+        preds = torch.argmax(aligned_logits, dim=1)
+        correct_adapted += (preds == y).sum().item()
+        total_adapted += y.size(0)
 
     acc_training = correct_adapted / total_adapted if total_adapted > 0 else 0.0
 
@@ -785,6 +786,9 @@ def meta_training(
             print(f"inner_loss: {inner_loss: .4f}")
             plotting.plot_losses_and_accuracies(inner_losses, outer_losses, acc_training_list, average_acc_diff, kmeans_acc)
 
+    return inner_losses, outer_losses, acc_training_list, average_acc_diff, kmeans_acc
+        
+
 
 def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
     out_dir = Path(out_dir)
@@ -837,12 +841,7 @@ def main():
             resources.kl_history_by_dataset, visualization_folder / "kl_plots"
         )
 
-    hyper = HyperNetwork(
-        layer_sizes=target_layer_sizes,
-        condition_dim=condition_dim,
-        head_hidden=head_hidden,
-        use_bias=use_bias,
-    ).to(device)
+
 
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
 
@@ -852,9 +851,41 @@ def main():
     )
     train_subset_names = list(resources.train_datasets.keys())
 
-    meta_training(
-        hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads
-    )
+    inner_losses_experiment = []
+    outer_losses_experiment = []
+    acc_training_experiment = []
+    average_acc_diff_experiment = []
+    kmeans_acc_experiment = []
+    for experiment in range(run_experiment_n_times):
+        hyper = HyperNetwork(
+        layer_sizes=target_layer_sizes,
+        condition_dim=condition_dim,
+        head_hidden=head_hidden,
+        use_bias=use_bias,
+        ).to(device)
+            
+        inner_losses, outer_losses, acc_training, average_acc_diff, kmeans_acc = meta_training(
+            hyper, target, train_subset_names, test_dataset_for_eval, resources, print_grads)
+        
+        #inner_losses_experiment.append(inner_losses)
+        #outer_losses_experiment.append(outer_losses)
+        acc_training_experiment.append(acc_training)
+        average_acc_diff_experiment.append(average_acc_diff)
+        kmeans_acc_experiment.append(kmeans_acc)
+
+        #inner_losses_avg = np.mean(np.array(inner_losses_experiment), axis = 0)
+        #outer_losses_avg = np.mean(np.array(outer_losses_experiment), axis=0)
+        acc_training_avg = np.mean(np.array(acc_training_experiment), axis=0)
+        average_acc_diff_avg = np.mean(np.array(average_acc_diff_experiment), axis=0)
+        kmeans_acc_avg = np.mean(np.array(kmeans_acc_experiment), axis=0)
+
+        plotting.plot_losses_and_accuracies(None, None, acc_training_avg, average_acc_diff_avg, kmeans_acc_avg, name_addition= "_average")
+
+
+        
+    
+    
+
 
 
 if __name__ == "__main__":
