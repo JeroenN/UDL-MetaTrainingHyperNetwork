@@ -2,7 +2,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_training_list, average_acc_diff, kmeans_acc):
-    Path(Path(__file__).parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
+    Path(Path(__file__).parent.parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
     plt.figure()
     for dataset_name in inner_losses_dict:
         plt.plot(
@@ -20,7 +20,7 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_trainin
     plt.title("Losses per Dataset")
     plt.legend()
     plt.grid(True)
-    plt.savefig(Path(__file__).parent / "visualization" / "plots" / "loss.png")
+    plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "loss.png")
     plt.close()
 
     plt.figure()
@@ -32,7 +32,7 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_trainin
     plt.title("Accuracy")
     plt.legend()
     plt.grid(True)
-    plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy.png")
+    plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "accuracy.png")
     plt.close()
 
     if len(average_acc_diff) > 0:
@@ -44,5 +44,5 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_trainin
         plt.title("Accuracies averaged")
         plt.legend()
         plt.grid(True)
-        plt.savefig(Path(__file__).parent / "visualization" / "plots" / "accuracy_diff.png")
+        plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "accuracy_diff.png")
         plt.close()

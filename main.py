@@ -734,7 +734,6 @@ def meta_training(
         optimizer.zero_grad()
         outer_loss.backward()
 
-        ## Print gradients
         if print_grads:
             for name, p in hyper.named_parameters():
                 if p.grad is not None:
@@ -810,7 +809,6 @@ def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
 
 
 def main():
-
     print(f"Working on device {device}")
 
     resources = ResourceManager(
@@ -842,8 +840,6 @@ def main():
     test_dataset_for_eval = (
         test_subset_names[0] if test_subset_names else TEST_DATASET_NAME
     )
-
-    # Get list of training subset names for meta-training
     train_subset_names = list(resources.train_datasets.keys())
 
     meta_training(
