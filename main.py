@@ -287,7 +287,7 @@ class ResourceManager:
 
     def _train_or_load_vae(self, dataset_name, dataset_subset):
         """Helper to train or load VAE for a specific dataset subset"""
-        vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim)
+        vae = VAE(w=image_width_height, h=image_width_height, ls_dim=vae_head_dim).to(device)
         file_name = dataset_name + vae_description + ".pth"
         path = self.model_folder / file_name
 
