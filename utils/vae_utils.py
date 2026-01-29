@@ -159,7 +159,6 @@ def train_vae(
             loss.backward()
             optimizer.step()
 
-            # Add KL divergence to history
             with torch.no_grad():
                 kl_term = (
                     0.5 * (mu.pow(2) + logvar.exp() - 1.0 - logvar).sum(dim=1).mean()
@@ -182,9 +181,9 @@ def train_vae(
                 beta_end=beta_end,
             )
             file_name = name + vae_description + ".pth"
-            save_dir = models_folder / f"{epochs}_epochs"
-            save_dir.mkdir(parents=True, exist_ok=True)
+            #save_dir = models_folder / f"{epochs}_epochs"
+            #save_dir.mkdir(parents=True, exist_ok=True)
             torch.save(
-                {"hyper_state_dict": vae.state_dict()}, save_dir / file_name
+                {"hyper_state_dict": vae.state_dict()}, models_folder / file_name
             )
     return vae, kl_history

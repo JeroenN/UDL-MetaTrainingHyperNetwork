@@ -14,9 +14,8 @@ training:
 
   weight_innerloss: 3
 
-  log_interval: 1
+  log_interval: 40
   save_path: "hypernet_checkpoint.pth"
-  use_clusterfit_targets: True
 
 meta:
   steps_innerloop: 3
@@ -25,7 +24,7 @@ meta:
 data:
   image_width_height: 28
   num_classes: 4
-  use_combined_loader: true  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
+  use_combined_loader: false  # true = combine all datasets, shuffle, sample; false = random dataset per epoch
 
 vae:
   vae_head_dim: 128

@@ -104,24 +104,19 @@ def train_shared_vae(
 ):
     print(f"Training a shared VAE on {len(train_datasets)} training subsets")
 
-    # Combine ALL training data from ALL subsets
     all_train_data = {}
     current_idx = 0
 
     for dataset_subset in train_datasets:
-        # Get the actual data from the subset
         train_split = dataset_subset["train"]
 
-        # Convert to the format Dataset class expects
         for i in range(len(train_split)):
             ex = train_split[i]
             all_train_data[current_idx] = {"x": ex["x"], "y": ex["y"]}
             current_idx += 1
 
-    # Create a combined dataset with correct format
     combined_dataset = Dataset(all_train_data)
 
-    # Create DataLoader for the combined dataset
     combined_loader = DataLoader(
         combined_dataset,
         batch_size=batch_size_vae,
@@ -130,11 +125,10 @@ def train_shared_vae(
         pin_memory=pin_memory,
     )
 
-    # Train VAE
     _, kl_history = train_vae(
         vae,
         combined_loader,
-        combined_loader,  # Using same for validation for simplicity
+        combined_loader,  
         "shared_vae",
         lr_vae,
         epochs_vae,

@@ -12,6 +12,7 @@ from scipy.optimize import linear_sum_assignment
 from torch.func import functional_call, grad
 from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
+from scipy.cluster.vq import kmeans, vq
 
 from utils import (
     VAE,
@@ -24,6 +25,7 @@ from utils import (
     plot_kl,
     train_shared_vae,
     train_vae_for_dataset,
+    plotting
 )
 
 try:
@@ -151,29 +153,24 @@ class ResourceManager:
         self.shared_vae = None
 
         self.kl_history_shared = None
-        self.kl_history_by_dataset = {}  # if you also train separate VAEs
+        self.kl_history_by_dataset = {}
 
-        # Process training datasets
         for name in tqdm(train_dataset_names, desc="Loading train datasets"):
             self.process_dataset(name, is_train=True)
 
-        # Process test datasets
         for name in tqdm(test_dataset_names, desc="Loading test datasets"):
             self.process_dataset(name, is_train=False)
 
-        # VAE initialization
         if share_vae:
             self.setup_shared_vae()
         else:
             self.setup_seperate_vaes()
 
-        # Set VAE distributions for all datasets
         for dataset_name in list(self.train_datasets.keys()) + list(
             self.test_datasets.keys()
         ):
             self.set_vae_data_distributions(dataset_name)
 
-        # Setup combined loader if enabled
         if use_combined_loader:
             self._setup_combined_loader()
 
@@ -192,10 +189,9 @@ class ResourceManager:
                 subset_name = f"{dataset_name}_{i+1}"
                 self.train_datasets[subset_name] = subset
             else:
-                subset_name = f"{dataset_name}_test_{i+1}"  # Adds "test" to avoid naming conflicts
+                subset_name = f"{dataset_name}_test_{i+1}"  
                 self.test_datasets[subset_name] = subset
 
-            # Create loader with appropriate shuffle setting
             self._create_loader(subset_name, subset, shuffle=is_train)
 
     def _create_loader(self, dataset_name, dataset_subset, shuffle=True):
@@ -212,10 +208,9 @@ class ResourceManager:
         self.iters[dataset_name] = iter(loader)
 
     def setup_shared_vae(self):
-        """Setup shared VAE for all datasets - trained only on training subsets"""
         self.shared_vae = VAE(
             w=image_width_height, h=image_width_height, ls_dim=vae_head_dim
-        )
+        ).to(device)
         file_name = "shared_vae" + vae_description + ".pth"
         path = self.model_folder / file_name
 
@@ -227,7 +222,6 @@ class ResourceManager:
             self.kl_history_shared = None
         else:
             print(f"Shared VAE not found at {path}. Starting training...")
-            # Collect only training subsets for VAE training (not test!)
             all_train_subsets = []
             for subset_name, subset in self.train_datasets.items():
                 all_train_subsets.append(subset)
@@ -245,17 +239,15 @@ class ResourceManager:
                 beta_start=beta_start,
                 beta_end=beta_end,
             )
+            self.kl_history_shared = kl_history
 
         self.shared_vae.to(device).eval()
-        self.kl_history_shared = kl_history
 
-        # Assign shared VAE to all datasets (both train and test)
+
         for subset_name in self.train_datasets:
             self.vaes[subset_name] = self.shared_vae
         for subset_name in self.test_datasets:
-            self.vaes[subset_name] = (
-                self.shared_vae
-            )  # Test uses shared VAE for inference only
+            self.vaes[subset_name] = (self.shared_vae) 
 
     def setup_seperate_vaes(self):
         """Setup separate VAE for each dataset subset"""
@@ -488,30 +480,39 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, average_acc
         plt.close()
 
 
-# Basically clustering algorithm, find the neurons that correspond to the classes
-def get_optimal_neuron_permutation(logits, targets, num_classes):
-    probs = F.softmax(logits, dim=1)
-    preds = torch.argmax(probs, dim=1).detach().cpu().numpy()
-    targets_np = targets.detach().cpu().numpy()
+# Checks which logits belong to which targets, by looking at which neuron outputted the most often for a certain class
+def get_cluster_assignments(logits, targets, num_classes):
+    if isinstance(targets, torch.Tensor):
+        targets = targets.detach().cpu().numpy()
 
-    confusion = np.zeros((num_classes, num_classes))
-    for p, t in zip(preds, targets_np):
+    probs = F.softmax(logits, dim=1)
+    probs = probs.detach().to("cpu").numpy()
+    preds = np.argmax(probs, axis=1)
+
+    confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
+    for p, t in zip(preds, targets):
         confusion[p, t] += 1
 
-    row_ind, col_ind = linear_sum_assignment(-confusion)
-
-    class_to_neuron = {c: r for r, c in zip(row_ind, col_ind)}
-
-    used_neurons = set(class_to_neuron.values())
-    all_neurons = set(range(num_classes))
-    remaining_neurons = list(all_neurons - used_neurons)
-
-    perm_indices = []
+    class_best = []
     for c in range(num_classes):
-        if c in class_to_neuron:
-            perm_indices.append(class_to_neuron[c])
-        else:
-            perm_indices.append(remaining_neurons.pop())
+        best_neuron = np.argmax(confusion[:, c])
+        best_count = confusion[best_neuron, c]
+        class_best.append((c, best_neuron, best_count))
+
+    class_best.sort(key=lambda x: x[2], reverse=True)
+
+    perm_indices = [None] * num_classes
+    used_neurons = set()
+
+    for c, neuron, _ in class_best:
+        if neuron not in used_neurons:
+            perm_indices[c] = neuron
+            used_neurons.add(neuron)
+
+    remaining_neurons = [n for n in range(num_classes) if n not in used_neurons]
+    for c in range(num_classes):
+        if perm_indices[c] is None:
+            perm_indices[c] = remaining_neurons.pop()
 
     return torch.tensor(perm_indices, device=logits.device)
 
@@ -540,7 +541,7 @@ def evaluate_classification(
             distribution = torch.concat((mu, logvar), dim=1)
             logits = target.forward(distribution, params_base)
 
-            perm = get_optimal_neuron_permutation(logits, y, num_classes)
+            perm = get_cluster_assignments(logits, y, num_classes)
             aligned_logits = logits[:, perm]
 
             preds = torch.argmax(aligned_logits, dim=1)
@@ -595,7 +596,7 @@ def evaluate_classification(
             distribution = torch.concat((mu, logvar), dim=1)
             logits = target.forward(distribution, params_target_adapted)
 
-            perm = get_optimal_neuron_permutation(logits, y, num_classes)
+            perm = get_cluster_assignments(logits, y, num_classes)
             aligned_logits = logits[:, perm]
 
             preds = torch.argmax(aligned_logits, dim=1)
@@ -605,6 +606,22 @@ def evaluate_classification(
     acc_training = correct_adapted / total_adapted if total_adapted > 0 else 0.0
 
     return acc_no_training, acc_training
+
+def get_kmeans_accuracy(features, targets, k, iterations):
+    centroids, _ = kmeans(features, k, iter=iterations)
+    cluster_ids, _ = vq(features, centroids)  
+
+    cluster_ids_t = torch.from_numpy(cluster_ids).long().to("cpu")
+    logits = F.one_hot(cluster_ids_t, num_classes=k).float()
+
+    perm = get_cluster_assignments(logits=logits, targets=targets, num_classes=k)
+
+    aligned_logits = logits[:, perm]
+
+    preds = aligned_logits.argmax(dim=1)
+    acc = (preds == targets).float().mean().item()
+
+    return acc
 
 
 def meta_training(
@@ -618,16 +635,25 @@ def meta_training(
     optimizer = torch.optim.Adam(hyper.parameters(), lr=lr_outer)
 
     distributions_targets = []
+    mus = []
+    ys = []
     loader = resources.get_loader(test_dataset_name)
     vae = resources.get_vae(test_dataset_name)
     with torch.no_grad():
         for batch_idx, (X, y) in enumerate(loader):
             X = X.to(device)
             mu, logvar = get_gaussian_from_vae(vae, X, 0, visualize=False)
-            distributions_targets.append((mu, logvar, y))
+            distributions_targets.append((mu, logvar, y)) 
+            ys.append(y)
+            mus.append(mu)
 
             if batch_idx == steps_innerloop:
                 break
+
+    kmeans_mus = torch.concat(mus, dim = 0).cpu().numpy()
+    kmeans_y = torch.concat(ys, dim = 0).cpu().numpy()
+    kmeans_acc = get_kmeans_accuracy(kmeans_mus,  kmeans_y, num_classes, 20)   
+    print(f"\n KMEANS ACCURACY: {kmeans_acc} \n")
 
     inner_losses = defaultdict(list)
     outer_losses = defaultdict(list)
@@ -699,7 +725,7 @@ def meta_training(
 
         logits_outer = target.forward(outer_distribution_input, params_target_outer)
 
-        perm = get_optimal_neuron_permutation(logits_outer, y_outer, num_classes)
+        perm = get_cluster_assignments(logits_outer, y_outer, num_classes)
 
         aligned_logits_outer = logits_outer[:, perm]
 
@@ -748,16 +774,10 @@ def meta_training(
                 )
             print(f"outer_loss: {outer_loss: .4f}")
             print(f"inner_loss: {inner_loss: .4f}")
-            plot_losses_and_accuracies(inner_losses, outer_losses, average_acc_diff)
+            plotting.plot_losses_and_accuracies(inner_losses, outer_losses, acc_training_list, average_acc_diff, kmeans_acc)
 
 
 def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
-    """
-    Function to plot the KL divergence histories.
-
-    :param histories: Dictionary of dataset names to KL histories OR a single KL history list.
-    :param out_dir: Directory to save the plots.
-    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -778,7 +798,7 @@ def plot_kl_histories(histories: dict | list, out_dir: Union[str, Path]):
             print("[KL] No per-dataset KL histories to plot.")
         return
 
-    # In case of single history - shared VAE
+    # When we have a shared VAE
     if histories is None or len(histories) == 0:
         print("[KL] No shared KL history to plot.")
         return
@@ -818,9 +838,7 @@ def main():
 
     target = TargetNet(layer_sizes=target_layer_sizes, activation=F.relu)
 
-    # Get list of test subset names for evaluation
     test_subset_names = list(resources.test_datasets.keys())
-    # Use first test subset for evaluation (you might want to modify this)
     test_dataset_for_eval = (
         test_subset_names[0] if test_subset_names else TEST_DATASET_NAME
     )
