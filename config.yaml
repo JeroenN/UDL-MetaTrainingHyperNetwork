@@ -17,6 +17,9 @@ training:
 
   log_interval: 8
   save_path: "hypernet_checkpoint.pth"
+  # TRAIN_DATASET_NAMES: ["kmnist", "hebrew_chars", "fashion_mnist", "math_shapes"]
+  TRAIN_DATASET_NAMES: ["kmnist", "fashion_mnist"]
+  TEST_DATASET_NAME: ["mnist"]
 
 meta:
   steps_innerloop: 3
