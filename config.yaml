@@ -57,6 +57,6 @@ troubleshoot:
   print_grads: false
 
 experiment:
-  name: "auto"  # experiment folder name, or "auto" for timestamp-based naming
+  name: "default"  # experiment folder name, or "auto" for timestamp-based naming
   save_embeddings_interval: 10  # save embeddings every N epochs (0 to disable)
 
