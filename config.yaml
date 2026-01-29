@@ -6,7 +6,7 @@ training:
   #epochs_hyper: 4000
   #epochs_vae: 100
   epochs_hyper: 50
-  epochs_vae: 30
+  epochs_vae: 9
 
   lr_outer: 1e-5
   lr_vae: 1e-4
@@ -57,6 +57,6 @@ troubleshoot:
   print_grads: false
 
 experiment:
-  name: "default"  # experiment folder name, or "auto" for timestamp-based naming
+  name: "auto"  # experiment folder name, or "auto" for timestamp-based naming
   save_embeddings_interval: 10  # save embeddings every N epochs (0 to disable)
 
