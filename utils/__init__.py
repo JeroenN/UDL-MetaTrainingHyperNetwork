@@ -1,3 +1,4 @@
+from .dataset import Dataset, get_dataset
 from .loss_utils import *
 from .networks import HyperNetwork, TargetNet
 from .training_utils import *

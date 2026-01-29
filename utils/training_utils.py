@@ -3,7 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from dataset_loading import Dataset
+from .dataset import Dataset
 
 from .vae_utils import train_vae
 
