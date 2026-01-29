@@ -34,8 +34,8 @@ except AttributeError:
     pass
 
 #TRAIN_DATASET_NAMES = ["kmnist", "hebrew_chars", "fashion_mnist", "math_shapes"]
-TRAIN_DATASET_NAMES = ["kmnist", "fashion_mnist"]
-TEST_DATASET_NAME = ["mnist"]
+#TRAIN_DATASET_NAMES = ["kmnist", "fashion_mnist"]
+#TEST_DATASET_NAME = ["mnist"]
 
 device = torch.device(
     "cuda"
@@ -54,6 +54,9 @@ def load_config(path: Union[str, Path]) -> dict:
 
 
 CFG = load_config(Path(__file__).parent / "config.yaml")
+
+TRAIN_DATASET_NAMES = CFG["training"]["TRAIN_DATASET_NAMES"]
+TEST_DATASET_NAME = CFG["training"]["TEST_DATASET_NAME"]
 
 run_experiment_n_times = CFG["experiment"]["run_n_times"]
 
