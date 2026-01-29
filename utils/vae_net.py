@@ -1,9 +1,10 @@
 from pathlib import Path
+from typing import Optional, Union
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Union
 
 IN_CHANNELS = 1
 KERNEL_SIZE = 4

@@ -21,3 +21,5 @@ pip install torch --index-url https://download.pytorch.org/whl/cu118
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
+
+![alt text](https://github.com/JeroenN/UDL-MetaTrainingHyperNetwork/blob/main/initial_results.jpeg)
