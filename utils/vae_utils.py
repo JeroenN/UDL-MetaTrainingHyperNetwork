@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 import torch
@@ -50,7 +51,20 @@ def loss_mse_only(recon_x, x, mu, logvar):
     return MSE
 
 
-def evaluate_vae(vae, test_loader, epoch, total_epochs, beta_start, beta_end):
+def evaluate_vae(
+    vae, 
+    test_loader, 
+    epoch, 
+    total_epochs, 
+    beta_start, 
+    beta_end,
+    output_dir: Optional[Union[str, Path]] = None
+):
+    """Evaluate VAE and optionally save visualizations.
+    
+    Args:
+        output_dir: Directory to save visualizations. If None, no visualizations are saved.
+    """
     vae.eval()
 
     running_loss = 0.0
@@ -58,6 +72,12 @@ def evaluate_vae(vae, test_loader, epoch, total_epochs, beta_start, beta_end):
     list_logvar = []
     max_visualize = 5
     device = next(vae.parameters()).device
+    
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        vis_dir = output_dir / "visualizations"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+    
     with torch.no_grad():
         for batch_idx, (x, _) in enumerate(test_loader):
             x = x.to(device, dtype=torch.float32)
@@ -80,16 +100,11 @@ def evaluate_vae(vae, test_loader, epoch, total_epochs, beta_start, beta_end):
             pixels = x[0].numel()
             running_loss += loss.item() / (batch_size * pixels)
 
-            if batch_idx < max_visualize:
+            if output_dir is not None and batch_idx < max_visualize:
                 img, ax = plt.subplots(2, 2)
                 ax[0, 0].imshow(x[0].squeeze().to("cpu"))
                 ax[0, 1].imshow(reconstruct[0].squeeze().detach().cpu())
-                file_path = (
-                    Path(__file__).parent
-                    / "visualization"
-                    / f"evaluation_batch_idx_{batch_idx}_epoch_{epoch}.png"
-                )
-                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path = vis_dir / f"evaluation_batch_idx_{batch_idx}_epoch_{epoch}.png"
                 img.savefig(file_path)
                 plt.close(img)
 
@@ -97,7 +112,18 @@ def evaluate_vae(vae, test_loader, epoch, total_epochs, beta_start, beta_end):
     return list_mu, list_logvar
 
 
-def get_gaussian_from_vae(vae, x, idx, visualize: bool = False):
+def get_gaussian_from_vae(
+    vae, 
+    x, 
+    idx, 
+    visualize: bool = False,
+    output_dir: Optional[Union[str, Path]] = None
+):
+    """Get Gaussian parameters from VAE encoding.
+    
+    Args:
+        output_dir: Directory to save visualizations if visualize=True.
+    """
     vae.eval()
     device = next(vae.parameters()).device
     x = x.to(device, dtype=torch.float32)
@@ -105,12 +131,15 @@ def get_gaussian_from_vae(vae, x, idx, visualize: bool = False):
     with torch.no_grad():
         reconstruct, mu, logvar = vae(x)
 
-    if visualize:
+    if visualize and output_dir is not None:
+        output_dir = Path(output_dir)
+        vis_dir = output_dir / "visualizations"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        
         img, ax = plt.subplots(2, 2)
         ax[0, 0].imshow(x[0].squeeze().to("cpu"))
         ax[0, 1].imshow(reconstruct[0].squeeze().detach().cpu())
-        file_path = Path(__file__).parent / "visualization" / f"results_{idx}.png"
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path = vis_dir / f"results_{idx}.png"
         img.savefig(file_path)
         plt.close(img)
 
@@ -129,7 +158,13 @@ def train_vae(
     models_folder,
     beta_start=0.0,
     beta_end=1.0,
+    output_dir: Optional[Union[str, Path]] = None,
 ):
+    """Train VAE model.
+    
+    Args:
+        output_dir: Directory to save visualizations during evaluation.
+    """
     optimizer = torch.optim.Adam(vae.parameters(), lr=lr)
     mu = []
     logvar = []
@@ -179,6 +214,7 @@ def train_vae(
                 total_epochs=epochs,
                 beta_start=beta_start,
                 beta_end=beta_end,
+                output_dir=output_dir,
             )
             file_name = name + vae_description + ".pth"
             #save_dir = models_folder / f"{epochs}_epochs"

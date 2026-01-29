@@ -1,8 +1,25 @@
 from pathlib import Path
+from typing import Union
 import matplotlib.pyplot as plt
 
-def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_training_list, average_acc_diff, kmeans_acc):
-    Path(Path(__file__).parent.parent / "visualization" / "plots").mkdir(parents=True, exist_ok=True)
+
+def plot_losses_and_accuracies(
+    inner_losses_dict, 
+    outer_losses_dict, 
+    acc_training_list, 
+    average_acc_diff, 
+    kmeans_acc,
+    output_dir: Union[str, Path]
+):
+    """Plot training losses and accuracies.
+    
+    Args:
+        output_dir: Directory to save plots (will create 'plots/' subdirectory)
+    """
+    output_dir = Path(output_dir)
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    
     plt.figure()
     for dataset_name in inner_losses_dict:
         plt.plot(
@@ -20,19 +37,19 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_trainin
     plt.title("Losses per Dataset")
     plt.legend()
     plt.grid(True)
-    plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "loss.png")
+    plt.savefig(plots_dir / "loss.png")
     plt.close()
 
     plt.figure()
-    plt.plot(acc_training_list, label = "Target network accuracy")
-    kmeans_acc = [kmeans_acc] * len(acc_training_list)
-    plt.plot(kmeans_acc, label = "Kmeans accuracy")
+    plt.plot(acc_training_list, label="Target network accuracy")
+    kmeans_acc_line = [kmeans_acc] * len(acc_training_list)
+    plt.plot(kmeans_acc_line, label="Kmeans accuracy")
     plt.xlabel("Iteration")
     plt.ylabel("Accuracy")
     plt.title("Accuracy")
     plt.legend()
     plt.grid(True)
-    plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "accuracy.png")
+    plt.savefig(plots_dir / "accuracy.png")
     plt.close()
 
     if len(average_acc_diff) > 0:
@@ -44,5 +61,5 @@ def plot_losses_and_accuracies(inner_losses_dict, outer_losses_dict, acc_trainin
         plt.title("Accuracies averaged")
         plt.legend()
         plt.grid(True)
-        plt.savefig(Path(__file__).parent.parent / "visualization" / "plots" / "accuracy_diff.png")
+        plt.savefig(plots_dir / "accuracy_diff.png")
         plt.close()

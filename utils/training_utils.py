@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
@@ -60,8 +61,13 @@ def train_vae_for_dataset(
     models_folder,
     beta_start,
     beta_end,
+    output_dir: Optional[Union[str, Path]] = None,
 ):
-    """Train VAE on a specific dataset subset"""
+    """Train VAE on a specific dataset subset
+    
+    Args:
+        output_dir: Directory to save visualizations.
+    """
     print(f"Training VAE for {dataset_name}...")
 
     train_loader = DataLoader(
@@ -84,6 +90,7 @@ def train_vae_for_dataset(
         models_folder,
         beta_start,
         beta_end,
+        output_dir=output_dir,
     )
     return vae, kl_history
 
@@ -101,7 +108,13 @@ def train_shared_vae(
     models_folder,
     beta_start,
     beta_end,
+    output_dir: Optional[Union[str, Path]] = None,
 ):
+    """Train a shared VAE on multiple datasets.
+    
+    Args:
+        output_dir: Directory to save visualizations.
+    """
     print(f"Training a shared VAE on {len(train_datasets)} training subsets")
 
     all_train_data = {}
@@ -137,6 +150,7 @@ def train_shared_vae(
         models_folder,
         beta_start,
         beta_end,
+        output_dir=output_dir,
     )
 
     vae.eval()
