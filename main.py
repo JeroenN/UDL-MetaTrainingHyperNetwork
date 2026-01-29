@@ -398,6 +398,16 @@ class ResourceManager:
 
         # Remap labels to 0..num_unique-1
         unique_labels = torch.unique(y)
+        
+        # If more unique labels than num_classes, filter to keep only num_classes labels
+        if len(unique_labels) > num_classes:
+            valid_labels = unique_labels[:num_classes]
+            mask = torch.isin(y, valid_labels)
+            X = X[mask]
+            y = y[mask]
+            dataset_names = [n for n, m in zip(dataset_names, mask.cpu().tolist()) if m]
+            unique_labels = valid_labels
+        
         label_map = {lab.item(): i for i, lab in enumerate(unique_labels)}
         y = torch.tensor([label_map[int(lab)] for lab in y], device=y.device)
 
